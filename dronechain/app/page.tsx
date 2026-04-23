@@ -1,113 +1,146 @@
 "use client";
 
 import Link from "next/link";
-import { Cpu, Radio, Lock } from "lucide-react";
-import { useState, useEffect } from "react";
 import WalletConnect from "@/components/WalletConnect";
-import { getOpenTasks, getTask } from "@/lib/contract";
-import type { Task } from "@/lib/types";
+import { TaskStatus, DeliveryCategory } from "@/lib/types";
+import type { DeliveryTask } from "@/lib/types";
 
-// ── Demo data ─────────────────────────────────────────────────────────────────
+// ── Demo deliveries ───────────────────────────────────────────────────────────
 
-const HARDCODED_TOTAL = 47;
-const activeDrones = 12;
-const monLocked = "234.5";
-
-const DEMO_TASKS: Task[] = [
+const DEMO_DELIVERIES: (DeliveryTask & { icon: string; distanceLabel: string })[] = [
   {
-    id: "1",
-    title: "Agricultural Field Survey - Sector B7",
-    description: "Survey wheat fields in sector B7 for crop health analysis.",
+    id: 1,
+    icon: "🍕",
+    title: "Pizza delivery — Kadıköy to Moda",
+    category: DeliveryCategory.FOOD,
     requirements: {
-      minCoverage: 90,
-      maxDurationMinutes: 20,
-      altitudeRange: { min: 40, max: 60 },
-      additionalConstraints: [],
+      maxWeightKg: 1.5,
+      isFragile: false,
+      requiresCooling: true,
+      requiresSignature: false,
+      maxDeliveryMinutes: 15,
+      pickupLocation: "Kadıköy",
+      dropoffLocation: "Moda",
+      distanceKm: 2.1,
     },
-    reward: "0.08",
-    status: "open",
-    creator: "0x0000000000000000000000000000000000000000",
-    acceptedBy: "0x0000000000000000000000000000000000000000",
-    deadline: 0,
+    rewardEth: "0.03",
+    status: TaskStatus.IN_TRANSIT,
+    creator: "0x1234…abcd",
+    assignedDrone: "DRONE-MND-4721",
+    createdAt: Date.now(),
+    completedAt: 0,
+    proofHash: "",
+    deadline: Date.now() + 15 * 60 * 1000,
+    distanceLabel: "2.1 km",
   },
   {
-    id: "2",
-    title: "Infrastructure Inspection - Bridge MND-441",
-    description: "Inspect structural integrity of Bridge MND-441.",
+    id: 2,
+    icon: "💊",
+    title: "Insulin — Beşiktaş Pharmacy",
+    category: DeliveryCategory.PHARMACY,
     requirements: {
-      minCoverage: 95,
-      maxDurationMinutes: 30,
-      altitudeRange: { min: 30, max: 50 },
-      additionalConstraints: [],
+      maxWeightKg: 0.5,
+      isFragile: true,
+      requiresCooling: true,
+      requiresSignature: true,
+      maxDeliveryMinutes: 20,
+      pickupLocation: "Beşiktaş",
+      dropoffLocation: "Nişantaşı",
+      distanceKm: 3.4,
     },
-    reward: "0.15",
-    status: "accepted",
-    creator: "0x0000000000000000000000000000000000000000",
-    acceptedBy: "0x0000000000000000000000000000000000000000",
-    deadline: 0,
+    rewardEth: "0.08",
+    status: TaskStatus.OPEN,
+    creator: "0x5678…efgh",
+    assignedDrone: "",
+    createdAt: Date.now(),
+    completedAt: 0,
+    proofHash: "",
+    deadline: Date.now() + 20 * 60 * 1000,
+    distanceLabel: "3.4 km",
   },
   {
-    id: "3",
-    title: "Security Perimeter Scan - Zone Alpha",
-    description: "Scan security perimeter of Zone Alpha for anomalies.",
+    id: 3,
+    icon: "📦",
+    title: "iPhone 15 Pro — Trendyol",
+    category: DeliveryCategory.CARGO,
     requirements: {
-      minCoverage: 85,
-      maxDurationMinutes: 15,
-      altitudeRange: { min: 50, max: 70 },
-      additionalConstraints: [],
+      maxWeightKg: 0.8,
+      isFragile: true,
+      requiresCooling: false,
+      requiresSignature: true,
+      maxDeliveryMinutes: 30,
+      pickupLocation: "Ümraniye",
+      dropoffLocation: "Şişli",
+      distanceKm: 11.2,
     },
-    reward: "0.05",
-    status: "approved",
-    creator: "0x0000000000000000000000000000000000000000",
-    acceptedBy: "0x0000000000000000000000000000000000000000",
-    deadline: 0,
+    rewardEth: "0.12",
+    status: TaskStatus.DELIVERED,
+    creator: "0x9abc…ijkl",
+    assignedDrone: "DRONE-MND-0033",
+    createdAt: Date.now() - 45 * 60 * 1000,
+    completedAt: Date.now() - 5 * 60 * 1000,
+    proofHash: "0xdeadbeef",
+    deadline: Date.now(),
+    distanceLabel: "11.2 km",
   },
 ];
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
-const STATUS_STYLES: Record<string, string> = {
-  open:        "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30",
-  accepted:    "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
-  in_progress: "bg-blue-500/15 text-blue-400 border border-blue-500/30",
-  submitted:   "bg-purple-500/15 text-purple-400 border border-purple-500/30",
-  approved:    "bg-green-500/15 text-green-400 border border-green-500/30",
-  rejected:    "bg-red-500/15 text-red-400 border border-red-500/30",
-  expired:     "bg-gray-500/15 text-gray-400 border border-gray-500/30",
+const STATUS_CONFIG: Record<TaskStatus, { label: string; className: string }> = {
+  [TaskStatus.OPEN]:       { label: "OPEN",       className: "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30" },
+  [TaskStatus.ACCEPTED]:   { label: "ACCEPTED",   className: "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30" },
+  [TaskStatus.IN_TRANSIT]: { label: "IN TRANSIT", className: "bg-blue-500/15 text-blue-400 border border-blue-500/30" },
+  [TaskStatus.DELIVERED]:  { label: "DELIVERED",  className: "bg-purple-500/15 text-purple-400 border border-purple-500/30" },
+  [TaskStatus.VERIFIED]:   { label: "VERIFIED",   className: "bg-green-500/15 text-green-400 border border-green-500/30" },
+  [TaskStatus.FAILED]:     { label: "FAILED",     className: "bg-red-500/15 text-red-400 border border-red-500/30" },
+  [TaskStatus.CANCELLED]:  { label: "CANCELLED",  className: "bg-gray-500/15 text-gray-400 border border-gray-500/30" },
 };
 
-// ── Inline TaskCard ───────────────────────────────────────────────────────────
+// ── Category cards ────────────────────────────────────────────────────────────
 
-function TaskCard({ task }: { task: Task }) {
-  const { requirements: req } = task;
-  const badgeClass = STATUS_STYLES[task.status] ?? STATUS_STYLES.expired;
+const CATEGORIES = [
+  { icon: "🍕", name: "Food Delivery",  desc: "Hot meals in 15 min" },
+  { icon: "🛒", name: "Grocery",        desc: "Fresh produce door to door" },
+  { icon: "💊", name: "Pharmacy",       desc: "Medicine when you need it" },
+  { icon: "📦", name: "Cargo",          desc: "E-commerce same-hour delivery" },
+  { icon: "📄", name: "Document",       desc: "Legal papers, contracts" },
+];
 
+// ── Delivery card ─────────────────────────────────────────────────────────────
+
+function DeliveryCard({
+  task,
+}: {
+  task: (typeof DEMO_DELIVERIES)[number];
+}) {
+  const badge = STATUS_CONFIG[task.status];
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 hover:border-cyan-500/50 transition-all flex flex-col gap-3">
-      {/* Title */}
-      <p className="font-semibold text-white leading-snug">{task.title}</p>
-
-      {/* Reward + status row */}
-      <div className="flex items-center justify-between">
-        <span className="text-cyan-400 text-lg font-bold">{task.reward} MON</span>
-        <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium capitalize ${badgeClass}`}>
-          {task.status.replace("_", " ")}
+    <div className="bg-gray-800/60 border border-gray-700 rounded-2xl p-5 flex flex-col gap-3 hover:border-cyan-500/40 transition-all">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <span className="text-2xl leading-none">{task.icon}</span>
+          <p className="font-semibold text-white text-sm leading-snug">{task.title}</p>
+        </div>
+        <span className={`shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${badge.className}`}>
+          {badge.label}
         </span>
       </div>
 
-      {/* Requirements summary */}
-      <p className="text-xs text-gray-400">
-        Coverage {req.minCoverage}% &nbsp;·&nbsp; {req.maxDurationMinutes} min &nbsp;·&nbsp;
-        {req.altitudeRange.min}–{req.altitudeRange.max} m
-      </p>
+      <div className="flex items-center justify-between text-xs text-gray-400">
+        <span>{task.distanceLabel}</span>
+        {task.assignedDrone && (
+          <span className="font-mono text-gray-500">{task.assignedDrone}</span>
+        )}
+      </div>
 
-      {/* Link */}
-      <div className="flex justify-end mt-auto">
+      <div className="flex items-center justify-between mt-auto pt-1 border-t border-gray-700/60">
+        <span className="text-cyan-400 font-bold text-base">{task.rewardEth} MON</span>
         <Link
-          href="/tasks/demo"
-          className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+          href={`/tasks/${task.id}`}
+          className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
         >
-          View Task →
+          View →
         </Link>
       </div>
     </div>
@@ -117,98 +150,173 @@ function TaskCard({ task }: { task: Task }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const [chainTasks, setChainTasks] = useState<Task[]>([]);
-  const [isLoadingChain, setIsLoadingChain] = useState(true);
-
-  useEffect(() => {
-    async function loadTasks() {
-      try {
-        const openIds = await getOpenTasks();
-        const tasks = await Promise.all(openIds.slice(0, 6).map((id) => getTask(id)));
-        setChainTasks(tasks);
-      } catch (e) {
-        // silently fall back to demo tasks
-      } finally {
-        setIsLoadingChain(false);
-      }
-    }
-    loadTasks();
-  }, []);
-
-  const displayTasks = chainTasks.length > 0 ? chainTasks : DEMO_TASKS;
-  const isLive = chainTasks.length > 0;
-  const totalTasks = isLive ? chainTasks.length : HARDCODED_TOTAL;
-
   return (
-    <div className="max-w-5xl mx-auto px-4 py-10 space-y-12">
+    <div className="min-h-screen bg-gray-950 text-white">
+      <div className="max-w-5xl mx-auto px-4 py-8 space-y-16">
 
-      {/* HEADER ROW */}
-      <div className="flex items-center justify-between">
-        <span className="text-2xl font-bold text-cyan-400">🚁 DroneChain</span>
-        <WalletConnect />
-      </div>
+        {/* NAV */}
+        <nav className="flex items-center justify-between">
+          <span className="text-xl font-bold tracking-tight text-white">
+            <span className="text-cyan-400">Drone</span>Chain
+          </span>
+          <WalletConnect />
+        </nav>
 
-      {/* HERO */}
-      <section className="space-y-8">
-        <div className="text-center space-y-3">
-          <h1 className="text-4xl font-bold">Autonomous Drone Task Marketplace</h1>
-          <p className="text-gray-400 text-lg">
-            AI-defined tasks. Autonomous execution. Trustless payments on Monad.
+        {/* HERO */}
+        <section className="text-center space-y-6 pt-6">
+          <div className="inline-flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-semibold px-3 py-1 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse inline-block" />
+            Live on Monad Testnet
+          </div>
+
+          <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight leading-tight">
+            Decentralized<br />
+            <span className="text-cyan-400">Drone Delivery</span>
+          </h1>
+
+          <p className="text-gray-400 text-lg max-w-xl mx-auto">
+            Connect your drone. Earn MON. Deliver autonomously.
           </p>
-        </div>
 
-        {/* Stat boxes */}
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { icon: <Cpu size={22} className="text-cyan-400" />, value: totalTasks,    label: "Total Tasks"    },
-            { icon: <Radio size={22} className="text-cyan-400" />, value: activeDrones, label: "Active Drones"  },
-            { icon: <Lock size={22} className="text-cyan-400" />, value: `${monLocked} MON`, label: "MON Locked" },
-          ].map((stat) => (
-            <div
-              key={stat.label}
-              className="bg-gray-800 rounded-xl p-6 flex flex-col items-center gap-2 text-center"
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <Link
+              href="/create"
+              className="w-full sm:w-auto px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl transition-colors text-sm"
             >
-              {stat.icon}
-              <span className="text-2xl font-bold text-white">{stat.value}</span>
-              <span className="text-sm text-gray-400">{stat.label}</span>
-            </div>
-          ))}
-        </div>
-      </section>
+              📦 Request Delivery
+            </Link>
+            <Link
+              href="/drones/register"
+              className="w-full sm:w-auto px-6 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white font-semibold rounded-xl transition-colors text-sm"
+            >
+              🚁 Connect My Drone
+            </Link>
+          </div>
 
-      {/* TASK LIST */}
-      <section className="space-y-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold">Open Tasks</h2>
-            {!isLoadingChain && (
-              isLive ? (
-                <span className="flex items-center gap-1 text-xs font-semibold text-green-400 bg-green-500/15 border border-green-500/30 px-2 py-0.5 rounded-full">
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />
-                  LIVE
-                </span>
-              ) : (
-                <span className="text-xs font-semibold text-gray-400 bg-gray-500/15 border border-gray-500/30 px-2 py-0.5 rounded-full">
-                  DEMO
-                </span>
-              )
-            )}
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-4 pt-4 max-w-lg mx-auto">
+            {[
+              { value: "23",     label: "Active Drones" },
+              { value: "147",    label: "Deliveries Today" },
+              { value: "12 min", label: "Avg Delivery" },
+            ].map((s) => (
+              <div key={s.label} className="bg-gray-800/50 border border-gray-700 rounded-xl py-4 text-center">
+                <p className="text-2xl font-bold text-white">{s.value}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* CATEGORIES */}
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold">Delivery Categories</h2>
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-hide">
+            {CATEGORIES.map((cat) => (
+              <div
+                key={cat.name}
+                className="shrink-0 bg-gray-800/60 border border-gray-700 hover:border-cyan-500/40 rounded-2xl p-4 w-40 flex flex-col gap-2 cursor-pointer transition-all"
+              >
+                <span className="text-3xl">{cat.icon}</span>
+                <p className="font-semibold text-sm text-white">{cat.name}</p>
+                <p className="text-xs text-gray-400 leading-tight">{cat.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* HOW IT WORKS */}
+        <section className="space-y-6">
+          <h2 className="text-xl font-bold">How It Works</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                icon: "🧾",
+                step: "01",
+                title: "Place Order",
+                desc: "Describe your delivery, lock payment in a smart contract.",
+              },
+              {
+                icon: "🤖",
+                step: "02",
+                title: "Drone Auto-Selects",
+                desc: "Nearest available drone evaluates the job and accepts autonomously.",
+              },
+              {
+                icon: "✅",
+                step: "03",
+                title: "AI Verifies & Pays",
+                desc: "Delivery confirmed on-chain, drone owner earns MON instantly.",
+              },
+            ].map((item) => (
+              <div
+                key={item.step}
+                className="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 flex flex-col gap-3"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-3xl">{item.icon}</span>
+                  <span className="text-xs font-mono text-gray-600">{item.step}</span>
+                </div>
+                <p className="font-bold text-white">{item.title}</p>
+                <p className="text-sm text-gray-400 leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ACTIVE DELIVERIES */}
+        <section className="space-y-5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold">Active Deliveries</h2>
+              <span className="flex items-center gap-1 text-[10px] font-bold text-green-400 bg-green-500/15 border border-green-500/30 px-2 py-0.5 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse inline-block" />
+                LIVE
+              </span>
+            </div>
+            <Link
+              href="/tasks"
+              className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+            >
+              View all →
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {DEMO_DELIVERIES.map((task) => (
+              <DeliveryCard key={task.id} task={task} />
+            ))}
+          </div>
+        </section>
+
+        {/* DRONE NETWORK CTA */}
+        <section className="bg-gray-800/40 border border-gray-700 rounded-2xl p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="space-y-3 max-w-lg">
+            <h2 className="text-2xl font-bold">Join the Delivery Network</h2>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Your drone earns MON while you sleep. Like mining, but physical.
+              Register once, fly autonomously, collect rewards.
+            </p>
+            <div className="flex gap-6 pt-1">
+              <div>
+                <p className="text-cyan-400 font-bold text-lg">0.05 MON</p>
+                <p className="text-xs text-gray-500">Avg per delivery</p>
+              </div>
+              <div>
+                <p className="text-cyan-400 font-bold text-lg">4.2 MON/day</p>
+                <p className="text-xs text-gray-500">Top drone earnings</p>
+              </div>
+            </div>
           </div>
           <Link
-            href="/create"
-            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold rounded-lg text-sm transition-colors"
+            href="/drones/register"
+            className="shrink-0 px-6 py-3 bg-cyan-500 hover:bg-cyan-400 text-black font-bold rounded-xl transition-colors text-sm whitespace-nowrap"
           >
-            + Create Task
+            Register Your Drone →
           </Link>
-        </div>
+        </section>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {displayTasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
-          ))}
-        </div>
-      </section>
-
+      </div>
     </div>
   );
 }

@@ -29,7 +29,6 @@ export default function CreatePage() {
     };
   }, []);
 
-  // Trigger wallet request so MetaMask prompts if not yet connected
   const connectWallet = async () => {
     try {
       const provider = getProvider();
@@ -42,11 +41,16 @@ export default function CreatePage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-10">
-      <h1 className="text-3xl font-bold text-center mb-8">Create New Task</h1>
+      <div className="text-center mb-8">
+        <h1 className="text-3xl font-bold">Request a Delivery</h1>
+        <p className="text-slate-400 text-sm mt-2">
+          Drone-powered last-mile delivery on Monad
+        </p>
+      </div>
 
       {!walletAddress && (
         <div className="mb-6 flex items-center justify-between gap-4 bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3 text-amber-400 text-sm">
-          <span>⚠️ Connect your wallet to create tasks</span>
+          <span>⚠️ Connect your wallet to request deliveries</span>
           <button
             onClick={connectWallet}
             className="shrink-0 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg px-3 py-1 text-xs font-semibold transition-colors"

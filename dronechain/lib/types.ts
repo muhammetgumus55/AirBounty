@@ -1,118 +1,109 @@
 // ─────────────────────────────────────────────
-//  DroneChain – Core TypeScript Interfaces
+//  DroneChain – Last-Mile Delivery Network Types
 // ─────────────────────────────────────────────
 
-/** Granular requirements that a drone-proof must satisfy */
-export interface TaskRequirements {
-  /** Minimum area coverage as a percentage (0–100) */
-  minCoverage: number;
-  /** Maximum allowed flight duration in minutes */
-  maxDurationMinutes: number;
-  /** Acceptable altitude window in metres */
-  altitudeRange: {
-    min: number;
-    max: number;
-  };
-  /** Free-form extra constraints (e.g. "no-fly zone polygon", "thermal scan required") */
-  additionalConstraints: string[];
+export enum TaskStatus {
+  OPEN,
+  ACCEPTED,
+  IN_TRANSIT,
+  DELIVERED,
+  VERIFIED,
+  FAILED,
+  CANCELLED,
 }
 
-/** Lifecycle states a task can be in */
-export type TaskStatus =
-  | "open"        // posted, accepting applications
-  | "accepted"    // a drone operator has been assigned
-  | "in_progress" // drone is actively working
-  | "submitted"   // proof uploaded, awaiting verification
-  | "approved"    // proof accepted, reward paid
-  | "rejected"    // proof rejected, task reopens
-  | "expired";    // past deadline with no approved submission
+export enum DeliveryCategory {
+  FOOD,       // Yemeksepeti, Getir style hot food
+  GROCERY,    // Market, fresh produce
+  PHARMACY,   // Medicine, medical supplies
+  CARGO,      // Amazon, e-commerce packages
+  DOCUMENT,   // Contracts, legal papers
+}
 
-/** A posted task on the DroneChain marketplace */
-export interface Task {
-  /** Unique on-chain task identifier */
-  id: string;
-  /** Short human-readable title */
+export interface DeliveryRequirements {
+  maxWeightKg: number;
+  isFragile: boolean;
+  requiresCooling: boolean; // for food/medicine
+  requiresSignature: boolean;
+  maxDeliveryMinutes: number;
+  pickupLocation: string;
+  dropoffLocation: string;
+  distanceKm: number;
+}
+
+export interface DeliveryTask {
+  id: number;
   title: string;
-  /** Full description of what the drone must accomplish */
-  description: string;
-  /** Machine-verifiable constraints */
-  requirements: TaskRequirements;
-  /** Reward amount in ETH (as string to avoid precision loss) */
-  reward: string;
-  /** Current lifecycle state */
+  category: DeliveryCategory;
+  requirements: DeliveryRequirements;
+  rewardEth: string;
   status: TaskStatus;
-  /** Ethereum address of the task creator */
   creator: string;
-  /** Ethereum address of the operator who accepted the task (empty if open) */
-  acceptedBy: string;
-  /** Unix timestamp (seconds) after which the task expires */
+  assignedDrone: string;
+  createdAt: number;
+  completedAt: number;
+  proofHash: string;
   deadline: number;
 }
 
-/** Raw telemetry proof submitted by a drone operator */
-export interface DroneProof {
-  /** References the parent Task.id */
-  taskId: string;
-  /** Actual area coverage achieved (%) */
-  coveragePercent: number;
-  /** Actual flight duration in minutes */
-  durationMinutes: number;
-  /** Average flight altitude in metres */
-  altitude: number;
-  /** Unix timestamp (ms) when the proof was generated */
-  timestamp: number;
-  /** Hardware serial / unique drone identifier */
-  droneId: string;
-  /** Optional extra telemetry payload captured from the mission */
-  rawData?: {
-    gpsTrackPoints: number;
-    batteryUsed: string;
-    weatherCondition: string;
-  };
+export interface DroneSpec {
+  id: string;
+  name: string;
+  maxPayloadKg: number;
+  maxRangeKm: number;
+  maxFlightMinutes: number;
+  hasCoolingBay: boolean;
+  hasSecureCompartment: boolean;
+  homeLocation: string;
+  ownerAddress: string;
+  batteryLevel: number; // 0-100
+  status: 'AVAILABLE' | 'IN_MISSION' | 'CHARGING' | 'OFFLINE';
+  totalDeliveries: number;
+  successRate: number;
+  earnedTotal: string; // in MON
 }
 
-/** Quick pre-flight acceptance estimate for a drone-task match */
+export interface DeliveryCheckpoint {
+  progress: number; // 0-100%
+  altitude: number;
+  batteryLevel: number;
+  timestamp: number;
+  status: string;
+}
+
+export interface DeliveryProof {
+  taskId: number;
+  droneId: string;
+  batteryStart: number;
+  batteryEnd: number;
+  distanceCovered: number;
+  durationMinutes: number;
+  checkpoints: DeliveryCheckpoint[];
+  deliveryConfirmed: boolean;
+  timestamp: number;
+}
+
 export interface DroneEvaluation {
   droneId: string;
-  batteryLevel: number;
-  distanceKm: number;
+  droneName: string;
   canAccept: boolean;
   reason: string;
+  batteryLevel: number;
+  distanceKm: number;
+  estimatedMinutes: number;
+  payloadCapacityOk: boolean;
+  coolingAvailable: boolean;
+  suitabilityScore: number;
 }
 
-/** Result produced by the AI verification service */
 export interface VerificationResult {
-  /** Whether all task requirements were met */
   approved: boolean;
-  /** Human-readable summary from the AI verifier */
   reasoning: string;
-  /** List of individual criteria that the proof failed, if any */
-  failedCriteria: string[];
-}
-
-/** Minimal on-chain contract metadata */
-export interface ContractInfo {
-  address: string;
-  chainId: number;
-  chainName: string;
-  blockNumber: number;
-}
-
-/** Connected wallet state */
-export interface WalletState {
-  address: string | null;
-  isConnected: boolean;
-  chainId: number | null;
-  balance: string | null;
-}
-
-/** Payload sent to the task-creation smart-contract function */
-export interface CreateTaskPayload {
-  title: string;
-  description: string;
-  requirements: TaskRequirements;
-  /** Deadline as a Unix timestamp in seconds */
-  deadline: number;
-  /** ETH value to escrow (the reward) */
-  rewardEth: string;
+  criteriaChecks: {
+    criterion: string;
+    required: string;
+    actual: string;
+    passed: boolean;
+  }[];
+  confidenceScore: number;
 }
