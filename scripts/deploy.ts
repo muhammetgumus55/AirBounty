@@ -1,8 +1,9 @@
-import { ethers } from "hardhat";
+import hre from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
 
 async function main() {
+  const { ethers } = hre;
   const [deployer] = await ethers.getSigners();
 
   console.log("Deploying DroneTask contract...");

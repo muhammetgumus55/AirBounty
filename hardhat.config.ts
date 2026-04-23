@@ -1,8 +1,19 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import * as dotenv from "dotenv";
+import * as path from "path";
 
-dotenv.config();
+// Always load from the repo root regardless of cwd
+dotenv.config({ path: path.resolve(__dirname, ".env") });
+
+const monadRpc = process.env.MONAD_RPC;
+const rawPrivateKey = process.env.PRIVATE_KEY;
+
+const normalizedPrivateKey = rawPrivateKey
+  ? rawPrivateKey.startsWith("0x")
+    ? rawPrivateKey
+    : `0x${rawPrivateKey}`
+  : undefined;
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -18,11 +29,13 @@ const config: HardhatUserConfig = {
     localhost: {
       url: "http://127.0.0.1:8545",
     },
-    monadTestnet: {
-      url: process.env.MONAD_RPC ?? "",
-      chainId: 10143,
-      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-    },
+    ...(monadRpc && {
+      monadTestnet: {
+        url: monadRpc,
+        chainId: 10143,
+        accounts: normalizedPrivateKey ? [normalizedPrivateKey] : [],
+      },
+    }),
   },
 };
 

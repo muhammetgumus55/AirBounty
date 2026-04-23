@@ -17,29 +17,36 @@ Respond with this exact JSON structure:
   "reasoning": "<one sentence explanation>"
 }`;
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.ANTHROPIC_API_KEY}`,
-        "anthropic-version": "2023-06-01",
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet",
         max_tokens: 500,
-        system:
-          "You are an AI system that converts drone task descriptions into precise, measurable operational requirements. You must respond with valid JSON only. No markdown, no explanation, only raw JSON.",
-        messages: [{ role: "user", content: prompt }],
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an AI system that converts drone task descriptions into precise, measurable operational requirements. You must respond with valid JSON only. No markdown, no explanation, only raw JSON.",
+          },
+          { role: "user", content: prompt },
+        ],
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Anthropic API error ${response.status}: ${errorText}`);
+      throw new Error(`OpenRouter API error ${response.status}: ${errorText}`);
     }
 
     const data = await response.json();
-    const text = data.content[0].text;
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== "string") {
+      throw new Error("OpenRouter returned an invalid response format.");
+    }
     const requirements = JSON.parse(text);
 
     return NextResponse.json(requirements, { status: 200 });

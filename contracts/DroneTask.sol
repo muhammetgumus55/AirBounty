@@ -16,6 +16,19 @@ contract DroneTask {
     }
 
     // -------------------------------------------------------------------------
+    // Custom Errors
+    // -------------------------------------------------------------------------
+
+    error NotOwner();
+    error ReentrantCall();
+    error RewardRequired();
+    error CreatorCannotAccept();
+    error NotTaskCreator();
+    error InvalidTaskStatus(TaskStatus current, TaskStatus required);
+    error NotAssignedDrone();
+    error TransferFailed();
+
+    // -------------------------------------------------------------------------
     // Structs
     // -------------------------------------------------------------------------
 
@@ -36,6 +49,10 @@ contract DroneTask {
         string ipfsProofHash;
         uint256 createdAt;
         uint256 completedAt;
+        string title;
+        string description;
+        string category;
+        uint256 deadline;
     }
 
     // -------------------------------------------------------------------------
@@ -51,7 +68,7 @@ contract DroneTask {
     // Events
     // -------------------------------------------------------------------------
 
-    event TaskCreated(uint256 indexed taskId, address creator, uint256 reward);
+    event TaskCreated(uint256 indexed taskId, address creator, uint256 reward, string title);
     event TaskAccepted(uint256 indexed taskId, address drone);
     event ProofSubmitted(uint256 indexed taskId, string proofHash);
     event TaskVerified(uint256 indexed taskId, bool approved, uint256 reward);
@@ -70,19 +87,19 @@ contract DroneTask {
     // -------------------------------------------------------------------------
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "DroneTask: caller is not the owner");
+        if (msg.sender != owner) revert NotOwner();
         _;
     }
 
     modifier noReentrant() {
-        require(!locked, "DroneTask: reentrant call");
+        if (locked) revert ReentrantCall();
         locked = true;
         _;
         locked = false;
     }
 
     modifier taskExists(uint256 taskId) {
-        require(taskId < taskCount, "DroneTask: task does not exist");
+        require(taskId < taskCount, "Task does not exist");
         _;
     }
 
@@ -90,8 +107,16 @@ contract DroneTask {
     // Functions
     // -------------------------------------------------------------------------
 
-    function createTask(TaskRequirements calldata req) external payable {
-        require(msg.value > 0, "DroneTask: reward must be greater than zero");
+    function createTask(
+        string calldata title,
+        string calldata description,
+        string calldata category,
+        uint256 deadline,
+        TaskRequirements calldata req
+    ) external payable {
+        require(bytes(title).length > 0, "Title required");
+        require(deadline > block.timestamp, "Deadline must be in future");
+        if (msg.value == 0) revert RewardRequired();
 
         uint256 taskId = taskCount;
         tasks[taskId] = Task({
@@ -103,17 +128,21 @@ contract DroneTask {
             requirements: req,
             ipfsProofHash: "",
             createdAt: block.timestamp,
-            completedAt: 0
+            completedAt: 0,
+            title: title,
+            description: description,
+            category: category,
+            deadline: deadline
         });
         taskCount++;
 
-        emit TaskCreated(taskId, msg.sender, msg.value);
+        emit TaskCreated(taskId, msg.sender, msg.value, title);
     }
 
     function acceptTask(uint256 taskId) external taskExists(taskId) {
         Task storage task = tasks[taskId];
-        require(task.status == TaskStatus.OPEN, "DroneTask: task is not open");
-        require(msg.sender != task.creator, "DroneTask: creator cannot accept own task");
+        if (task.status != TaskStatus.OPEN) revert InvalidTaskStatus(task.status, TaskStatus.OPEN);
+        if (msg.sender == task.creator) revert CreatorCannotAccept();
 
         task.assignedDrone = payable(msg.sender);
         task.status = TaskStatus.ACCEPTED;
@@ -123,8 +152,8 @@ contract DroneTask {
 
     function submitProof(uint256 taskId, string calldata proofHash) external taskExists(taskId) {
         Task storage task = tasks[taskId];
-        require(task.status == TaskStatus.ACCEPTED, "DroneTask: task is not accepted");
-        require(msg.sender == task.assignedDrone, "DroneTask: caller is not the assigned drone");
+        if (task.status != TaskStatus.ACCEPTED) revert InvalidTaskStatus(task.status, TaskStatus.ACCEPTED);
+        if (msg.sender != task.assignedDrone) revert NotAssignedDrone();
 
         task.ipfsProofHash = proofHash;
         task.status = TaskStatus.COMPLETED;
@@ -139,7 +168,7 @@ contract DroneTask {
         taskExists(taskId)
     {
         Task storage task = tasks[taskId];
-        require(task.status == TaskStatus.COMPLETED, "DroneTask: task is not completed");
+        if (task.status != TaskStatus.COMPLETED) revert InvalidTaskStatus(task.status, TaskStatus.COMPLETED);
 
         uint256 reward = task.reward;
 
@@ -157,8 +186,8 @@ contract DroneTask {
 
     function cancelTask(uint256 taskId) external taskExists(taskId) {
         Task storage task = tasks[taskId];
-        require(task.status == TaskStatus.OPEN, "DroneTask: task is not open");
-        require(msg.sender == task.creator, "DroneTask: caller is not the task creator");
+        if (task.status != TaskStatus.OPEN) revert InvalidTaskStatus(task.status, TaskStatus.OPEN);
+        if (msg.sender != task.creator) revert NotTaskCreator();
 
         task.status = TaskStatus.CANCELLED;
         task.creator.transfer(task.reward);

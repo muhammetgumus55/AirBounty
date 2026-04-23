@@ -250,7 +250,7 @@ export default function TaskDetailPage() {
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-gray-500">Click "Evaluate Drone" to check availability.</p>
+              <p className="text-sm text-gray-500">Click &quot;Evaluate Drone&quot; to check availability.</p>
             )}
 
             {evaluation?.canAccept && task.status === "open" && (

@@ -6,7 +6,7 @@ import {
   parseEther,
   type Eip1193Provider,
 } from "ethers";
-import type { CreateTaskPayload, DroneProof, Task, TaskRequirements } from "./types";
+import type { CreateTaskPayload, DroneProof, Task, TaskRequirements, TaskStatus } from "./types";
 
 declare global {
   interface WindowEthereum extends Eip1193Provider {
@@ -23,36 +23,176 @@ export const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "";
 export const MONAD_RPC = process.env.NEXT_PUBLIC_MONAD_RPC || "https://testnet-rpc.monad.xyz";
 export const MONAD_CHAIN_ID = 10143;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ABI — mirrors DroneTask.sol exactly. Structs use tuple/components notation.
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const CONTRACT_ABI = [
-  "function createTask((uint256 minCoverage,uint256 maxDurationMinutes,uint256 altitudeMin,uint256 altitudeMax) requirements) payable",
-  "function acceptTask(uint256 taskId)",
-  "function submitProof(uint256 taskId,string proofHash)",
-  "function verifyAndPay(uint256 taskId,bool approved)",
-  "function cancelTask(uint256 taskId)",
-  "function getTask(uint256 taskId) view returns ((uint256 id,string title,string description,(uint256 minCoverage,uint256 maxDurationMinutes,uint256 altitudeMin,uint256 altitudeMax) requirements,uint256 reward,uint8 status,address creator,address acceptedBy,uint256 deadline))",
-  "function getOpenTasks() view returns (uint256[])",
-  "event TaskCreated(uint256 indexed taskId,address indexed creator,uint256 reward)",
-  "event TaskAccepted(uint256 indexed taskId,address indexed operator)",
-  "event ProofSubmitted(uint256 indexed taskId,address indexed operator,string proofHash)",
-  "event TaskVerified(uint256 indexed taskId,bool approved)",
-  "event TaskCancelled(uint256 indexed taskId)"
+  // ── Write functions ────────────────────────────────────────────────────────
+  {
+    type: "function",
+    name: "createTask",
+    inputs: [
+      { name: "title",       type: "string"  },
+      { name: "description", type: "string"  },
+      { name: "category",    type: "string"  },
+      { name: "deadline",    type: "uint256" },
+      {
+        name: "req",
+        type: "tuple",
+        components: [
+          { name: "minCoverage",        type: "uint8"  },
+          { name: "maxDurationMinutes", type: "uint16" },
+          { name: "minAltitude",        type: "uint16" },
+          { name: "maxAltitude",        type: "uint16" },
+        ],
+      },
+    ],
+    outputs: [],
+    stateMutability: "payable",
+  },
+  {
+    type: "function",
+    name: "acceptTask",
+    inputs: [{ name: "taskId", type: "uint256" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "submitProof",
+    inputs: [
+      { name: "taskId",    type: "uint256" },
+      { name: "proofHash", type: "string"  },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "verifyAndPay",
+    inputs: [
+      { name: "taskId",   type: "uint256" },
+      { name: "approved", type: "bool"    },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  {
+    type: "function",
+    name: "cancelTask",
+    inputs: [{ name: "taskId", type: "uint256" }],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+  // ── Read functions ─────────────────────────────────────────────────────────
+  {
+    type: "function",
+    name: "getTask",
+    inputs: [{ name: "taskId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "id",            type: "uint256"  },
+          { name: "creator",       type: "address"  },
+          { name: "assignedDrone", type: "address"  },
+          { name: "reward",        type: "uint256"  },
+          { name: "status",        type: "uint8"    },
+          {
+            name: "requirements",
+            type: "tuple",
+            components: [
+              { name: "minCoverage",        type: "uint8"  },
+              { name: "maxDurationMinutes", type: "uint16" },
+              { name: "minAltitude",        type: "uint16" },
+              { name: "maxAltitude",        type: "uint16" },
+            ],
+          },
+          { name: "ipfsProofHash", type: "string"  },
+          { name: "createdAt",     type: "uint256" },
+          { name: "completedAt",   type: "uint256" },
+          { name: "title",         type: "string"  },
+          { name: "description",   type: "string"  },
+          { name: "category",      type: "string"  },
+          { name: "deadline",      type: "uint256" },
+        ],
+      },
+    ],
+    stateMutability: "view",
+  },
+  {
+    type: "function",
+    name: "getOpenTasks",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256[]" }],
+    stateMutability: "view",
+  },
+  // ── Events ─────────────────────────────────────────────────────────────────
+  {
+    type: "event",
+    name: "TaskCreated",
+    inputs: [
+      { name: "taskId",  type: "uint256", indexed: true  },
+      { name: "creator", type: "address", indexed: false },
+      { name: "reward",  type: "uint256", indexed: false },
+      { name: "title",   type: "string",  indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "TaskAccepted",
+    inputs: [
+      { name: "taskId", type: "uint256", indexed: true  },
+      { name: "drone",  type: "address", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ProofSubmitted",
+    inputs: [
+      { name: "taskId",    type: "uint256", indexed: true  },
+      { name: "proofHash", type: "string",  indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "TaskVerified",
+    inputs: [
+      { name: "taskId",   type: "uint256", indexed: true  },
+      { name: "approved", type: "bool",    indexed: false },
+      { name: "reward",   type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "TaskCancelled",
+    inputs: [
+      { name: "taskId", type: "uint256", indexed: true },
+    ],
+  },
 ] as const;
 
 // Backward-compatible alias used by existing components.
 export const DRONE_TASK_ABI = CONTRACT_ABI;
 
-const STATUS_MAP: Task["status"][] = [
-  "open",
-  "accepted",
-  "in_progress",
-  "submitted",
-  "approved",
-  "rejected",
-  "expired",
+// ─────────────────────────────────────────────────────────────────────────────
+// Status mapping
+// Contract enum: OPEN=0, ACCEPTED=1, COMPLETED=2, VERIFIED=3, FAILED=4, CANCELLED=5
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STATUS_MAP: TaskStatus[] = [
+  "open",       // 0 — OPEN
+  "accepted",   // 1 — ACCEPTED
+  "submitted",  // 2 — COMPLETED (proof uploaded, awaiting verification)
+  "approved",   // 3 — VERIFIED
+  "rejected",   // 4 — FAILED
+  "expired",    // 5 — CANCELLED
 ];
 
-function mapStatus(status: number): Task["status"] {
-  return STATUS_MAP[status] ?? "open";
+function mapStatus(raw: number): TaskStatus {
+  return STATUS_MAP[raw] ?? "open";
 }
 
 function toNumber(value: unknown): number {
@@ -61,50 +201,33 @@ function toNumber(value: unknown): number {
   return Number(value ?? 0);
 }
 
-function normalizeTask(raw: unknown): Task {
-  const safeRaw = (raw ?? {}) as {
-    id?: unknown;
-    title?: unknown;
-    description?: unknown;
-    requirements?: {
-      minCoverage?: unknown;
-      maxDurationMinutes?: unknown;
-      altitudeMin?: unknown;
-      altitudeMax?: unknown;
-    };
-    reward?: unknown;
-    status?: unknown;
-    creator?: unknown;
-    acceptedBy?: unknown;
-    deadline?: unknown;
-  };
-  const requirements = safeRaw.requirements ?? {};
-  const rewardWei =
-    typeof safeRaw.reward === "bigint" ||
-    typeof safeRaw.reward === "string" ||
-    typeof safeRaw.reward === "number"
-      ? safeRaw.reward
-      : BigInt(0);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeTask(raw: any): Task {
+  const req = raw.requirements ?? {};
   return {
-    id: String(safeRaw.id ?? ""),
-    title: String(safeRaw.title ?? ""),
-    description: String(safeRaw.description ?? ""),
+    id:          String(toNumber(raw.id)),
+    title:       String(raw.title       ?? ""),
+    description: String(raw.description ?? ""),
     requirements: {
-      minCoverage: toNumber(requirements?.minCoverage),
-      maxDurationMinutes: toNumber(requirements?.maxDurationMinutes),
+      minCoverage:        toNumber(req.minCoverage),
+      maxDurationMinutes: toNumber(req.maxDurationMinutes),
       altitudeRange: {
-        min: toNumber(requirements?.altitudeMin),
-        max: toNumber(requirements?.altitudeMax),
+        min: toNumber(req.minAltitude),
+        max: toNumber(req.maxAltitude),
       },
       additionalConstraints: [],
     },
-    reward: formatEther(rewardWei),
-    status: mapStatus(toNumber(safeRaw.status)),
-    creator: String(safeRaw.creator ?? "0x0000000000000000000000000000000000000000"),
-    acceptedBy: String(safeRaw.acceptedBy ?? "0x0000000000000000000000000000000000000000"),
-    deadline: toNumber(safeRaw.deadline),
+    reward:     formatEther(typeof raw.reward === "bigint" ? raw.reward : BigInt(raw.reward ?? 0)),
+    status:     mapStatus(toNumber(raw.status)),
+    creator:    String(raw.creator       ?? "0x0000000000000000000000000000000000000000"),
+    acceptedBy: String(raw.assignedDrone ?? "0x0000000000000000000000000000000000000000"),
+    deadline:   toNumber(raw.deadline),
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Provider / signer helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function getProvider(): BrowserProvider {
   if (typeof window === "undefined" || !window.ethereum) {
@@ -124,8 +247,7 @@ export function getReadOnlyProvider(): JsonRpcProvider {
 
 export async function getSigner() {
   try {
-    const provider = getProvider();
-    return await provider.getSigner();
+    return await getProvider().getSigner();
   } catch (error) {
     throw new Error(
       `Failed to get signer: ${error instanceof Error ? error.message : "Unknown signer error"}`
@@ -147,36 +269,68 @@ export async function getContract(withSigner = false): Promise<Contract> {
   }
 }
 
-export async function createTask(requirements: TaskRequirements, rewardEth: string): Promise<string>;
+// ─────────────────────────────────────────────────────────────────────────────
+// Write wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function createTask(payload: CreateTaskPayload): Promise<string>;
 export async function createTask(
-  requirementsOrPayload: TaskRequirements | CreateTaskPayload,
-  rewardEthArg?: string
-): Promise<string> {
+  title: string,
+  description: string,
+  category: string,
+  deadline: number,
+  requirements: TaskRequirements,
+  rewardEth: string
+): Promise<{ txHash: string; taskId: number } | string> {
+  if (typeof title !== "string") {
+    const payload = title as unknown as CreateTaskPayload;
+    const result = await createTask(
+      payload.title,
+      payload.description,
+      "general",
+      payload.deadline,
+      payload.requirements,
+      payload.rewardEth
+    );
+    return result.txHash;
+  }
+
   try {
     const contract = await getContract(true);
-    const requirements =
-      "requirements" in requirementsOrPayload
-        ? requirementsOrPayload.requirements
-        : requirementsOrPayload;
-    const rewardEth =
-      typeof rewardEthArg === "string"
-        ? rewardEthArg
-        : "rewardEth" in requirementsOrPayload
-        ? requirementsOrPayload.rewardEth
-        : "0";
-
-    const requirementsTuple = [
-      BigInt(requirements.minCoverage),
-      BigInt(requirements.maxDurationMinutes),
-      BigInt(requirements.altitudeRange.min),
-      BigInt(requirements.altitudeRange.max),
+    const reqTuple = [
+      requirements.minCoverage,
+      requirements.maxDurationMinutes,
+      requirements.altitudeRange.min,
+      requirements.altitudeRange.max,
     ] as const;
 
-    const tx = await contract.createTask(requirementsTuple, {
-      value: parseEther(rewardEth),
-    });
-    return tx.hash as string;
+    const tx = await contract.createTask(
+      title,
+      description,
+      category,
+      BigInt(deadline),
+      reqTuple,
+      { value: parseEther(rewardEth) }
+    );
+    const receipt = await tx.wait();
+
+    // Parse the real taskId from the TaskCreated event log.
+    let taskId = 0;
+    if (receipt?.logs) {
+      for (const log of receipt.logs) {
+        try {
+          const parsed = contract.interface.parseLog(log);
+          if (parsed?.name === "TaskCreated") {
+            taskId = Number(parsed.args.taskId);
+            break;
+          }
+        } catch {
+          // skip logs that belong to other contracts / can't be parsed
+        }
+      }
+    }
+
+    return { txHash: tx.hash as string, taskId };
   } catch (error) {
     throw new Error(
       `Failed to create task: ${error instanceof Error ? error.message : "Unknown transaction error"}`
@@ -201,7 +355,6 @@ export async function submitProof(proof: DroneProof): Promise<string>;
 export async function submitProof(taskIdOrProof: number | DroneProof, proofHashArg?: string): Promise<string> {
   try {
     const contract = await getContract(true);
-
     const taskId =
       typeof taskIdOrProof === "number" ? taskIdOrProof : Number(taskIdOrProof.taskId);
     const proofHash =
@@ -215,7 +368,7 @@ export async function submitProof(taskIdOrProof: number | DroneProof, proofHashA
     return tx.hash as string;
   } catch (error) {
     throw new Error(
-      `Failed to submit proof: ${error instanceof Error ? error.message : "Unknown transaction error"}`
+      `Failed to submit proof for task ${taskId}: ${error instanceof Error ? error.message : "Unknown transaction error"}`
     );
   }
 }
@@ -244,11 +397,15 @@ export async function cancelTask(taskId: number): Promise<string> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Read wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function getTask(taskId: number | string): Promise<Task> {
   try {
     const contract = await getContract(false);
-    const rawTask = await contract.getTask(BigInt(taskId));
-    return normalizeTask(rawTask);
+    const raw = await contract.getTask(BigInt(taskId));
+    return normalizeTask(raw);
   } catch (error) {
     throw new Error(
       `Failed to fetch task ${taskId}: ${error instanceof Error ? error.message : "Unknown read error"}`
@@ -259,8 +416,8 @@ export async function getTask(taskId: number | string): Promise<Task> {
 export async function getOpenTasks(): Promise<number[]> {
   try {
     const contract = await getContract(false);
-    const rawTaskIds = (await contract.getOpenTasks()) as Array<number | bigint>;
-    return rawTaskIds.map((id) => toNumber(id));
+    const raw = (await contract.getOpenTasks()) as bigint[];
+    return raw.map(Number);
   } catch (error) {
     throw new Error(
       `Failed to fetch open tasks: ${error instanceof Error ? error.message : "Unknown read error"}`
@@ -268,7 +425,10 @@ export async function getOpenTasks(): Promise<number[]> {
   }
 }
 
-// Backward-compatible aliases while migrating UI to verifyAndPay.
+// ─────────────────────────────────────────────────────────────────────────────
+// Backward-compatible aliases
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function approveTask(taskId: number | string): Promise<string> {
   return verifyAndPay(Number(taskId), true);
 }
@@ -281,9 +441,7 @@ export async function switchToMonad(): Promise<void> {
   if (typeof window === "undefined" || !window.ethereum) {
     throw new Error("MetaMask not found");
   }
-
-  const provider = getProvider();
-  await provider.send("wallet_addEthereumChain", [
+  await getProvider().send("wallet_addEthereumChain", [
     {
       chainId: `0x${MONAD_CHAIN_ID.toString(16)}`,
       chainName: "Monad Testnet",
