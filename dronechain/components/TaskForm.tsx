@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { createTask } from "@/lib/contract";
-import type { CreateTaskPayload, TaskRequirements } from "@/lib/types";
+import type { TaskRequirements } from "@/lib/types";
 
 // ── Field helpers ─────────────────────────────
 
@@ -59,14 +59,16 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
   const [title,       setTitle]       = useState("");
   const [description, setDescription] = useState("");
   const [rewardEth,   setRewardEth]   = useState("0.1");
-  const [deadlineDays, setDeadlineDays] = useState(7);
+  const [deadline,    setDeadline]    = useState(
+    () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
+  );
   const [req, setReq] = useState<TaskRequirements>(DEFAULT_REQUIREMENTS);
   const [newConstraint, setNewConstraint] = useState("");
 
   // ── UI state ───────────────────────────────
-  const [submitting, setSubmitting] = useState(false);
-  const [error,      setError]      = useState<string | null>(null);
-  const [txHash,     setTxHash]     = useState<string | null>(null);
+  const [submitting,     setSubmitting]     = useState(false);
+  const [error,          setError]          = useState<string | null>(null);
+  const [successMsg,     setSuccessMsg]     = useState<string | null>(null);
 
   // ── Constraint helpers ─────────────────────
   const addConstraint = () => {
@@ -101,21 +103,20 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
       return;
     }
 
-    const deadline = Math.floor(Date.now() / 1000) + deadlineDays * 86400;
-
-    const payload: CreateTaskPayload = {
-      title:        title.trim(),
-      description:  description.trim(),
-      requirements: req,
-      deadline,
-      rewardEth,
-    };
+    const deadlineTs = Math.floor(new Date(deadline).getTime() / 1000);
 
     setSubmitting(true);
     try {
-      const taskId = await createTask(payload);
-      setTxHash(taskId);
-      // Navigate to the new task page after a short delay
+      const result = await createTask(
+        title.trim(),
+        description.trim(),
+        "general",
+        deadlineTs,
+        req,
+        rewardEth
+      );
+      const { txHash, taskId } = result as { txHash: string; taskId: number };
+      setSuccessMsg(`Task #${taskId} created! TX: ${txHash.slice(0, 10)}...`);
       setTimeout(() => router.push(`/tasks/${taskId}`), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Transaction failed.");
@@ -322,17 +323,15 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
           </Field>
 
           <Field
-            id="deadline-days"
-            label="Deadline (days from now)"
-            hint="Task expires after this period"
+            id="deadline"
+            label="Mission Deadline"
+            hint="Task expires at this date/time"
           >
             <Input
-              id="deadline-days"
-              type="number"
-              min={1}
-              max={365}
-              value={deadlineDays}
-              onChange={(e) => setDeadlineDays(Number(e.target.value))}
+              id="deadline"
+              type="datetime-local"
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
               className="bg-white/5 border-white/10 text-slate-100 focus:border-violet-500"
               disabled={submitting}
             />
@@ -346,9 +345,9 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
           {error}
         </div>
       )}
-      {txHash && (
+      {successMsg && (
         <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-4 py-3 text-emerald-400 text-sm">
-          ✅ Task created! ID: <span className="font-mono font-bold">{txHash}</span>
+          ✅ <span className="font-mono font-bold">{successMsg}</span>
           <span className="text-slate-400"> — Redirecting…</span>
         </div>
       )}
