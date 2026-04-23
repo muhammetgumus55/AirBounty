@@ -8,6 +8,7 @@ import VerificationPanel from "@/components/VerificationPanel";
 import { simulateDroneEvaluation, generateDroneProof } from "@/lib/droneSimulator";
 import { verifyDroneTask } from "@/lib/aiService";
 import { acceptTask, submitProof, verifyAndPay, getTask } from "@/lib/contract";
+import { parseWeb3Error } from "@/lib/txErrors";
 import type { Task, DroneEvaluation, VerificationResult, DroneProof } from "@/lib/types";
 
 // ── Demo task (only rendered when params.id === "demo") ───────────────────────
@@ -133,10 +134,7 @@ export default function TaskDetailPage() {
           localStorage.setItem(`verify_${task.id}`, JSON.stringify(result));
         })
         .catch((err) => {
-          setNotification({
-            message: "Verification failed: " + (err instanceof Error ? err.message : String(err)),
-            type: "error",
-          });
+          setNotification({ message: parseWeb3Error(err), type: "error" });
           verifyTriggered.current = false; // allow retry
         })
         .finally(() => setIsVerifying(false));
@@ -168,10 +166,7 @@ export default function TaskDetailPage() {
       setTask(await getTask(Number(task.id)));
       setNotification({ message: "Task accepted!", type: "success" });
     } catch (err) {
-      setNotification({
-        message: "Accept failed: " + (err instanceof Error ? err.message : String(err)),
-        type: "error",
-      });
+      setNotification({ message: parseWeb3Error(err), type: "error" });
     }
   }
 
@@ -188,10 +183,7 @@ export default function TaskDetailPage() {
       setVerificationResult(result);
       localStorage.setItem(`verify_${task.id}`, JSON.stringify(result));
     } catch (err) {
-      setNotification({
-        message: "Proof submission failed: " + (err instanceof Error ? err.message : String(err)),
-        type: "error",
-      });
+      setNotification({ message: parseWeb3Error(err), type: "error" });
     } finally {
       setIsLoading(false);
     }
@@ -203,10 +195,7 @@ export default function TaskDetailPage() {
       await verifyAndPay(Number(task.id), verificationResult.approved);
       setNotification({ message: "Payment processed on Monad!", type: "success" });
     } catch (err) {
-      setNotification({
-        message: "Payment failed: " + (err instanceof Error ? err.message : String(err)),
-        type: "error",
-      });
+      setNotification({ message: parseWeb3Error(err), type: "error" });
     }
   }
 

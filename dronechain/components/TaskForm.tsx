@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { parseWeb3Error } from "@/lib/txErrors";
 import { PlusCircle, X, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -119,7 +120,7 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
       setSuccessMsg(`Task #${taskId} created! TX: ${txHash.slice(0, 10)}...`);
       setTimeout(() => router.push(`/tasks/${taskId}`), 1500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Transaction failed.");
+      setError(parseWeb3Error(err));
     } finally {
       setSubmitting(false);
     }
