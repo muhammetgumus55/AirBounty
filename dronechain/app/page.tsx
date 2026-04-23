@@ -1,211 +1,176 @@
 "use client";
 
-import { useState, useCallback } from "react";
 import Link from "next/link";
-import {
-  PlusCircle,
-  Search,
-  SlidersHorizontal,
-  Zap,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Cpu, Radio, Lock } from "lucide-react";
 import WalletConnect from "@/components/WalletConnect";
-import TaskCard from "@/components/TaskCard";
-import ContractStatus from "@/components/ContractStatus";
-import { getMockTasks } from "@/lib/droneSimulator";
-import { acceptTask } from "@/lib/contract";
-import type { Task, TaskStatus, WalletState } from "@/lib/types";
+import type { Task } from "@/lib/types";
 
-// ── Filter Options ────────────────────────────
+// ── Demo data ─────────────────────────────────────────────────────────────────
 
-const STATUS_FILTERS: { value: TaskStatus | "all"; label: string }[] = [
-  { value: "all",      label: "All"      },
-  { value: "open",     label: "Open"     },
-  { value: "accepted", label: "Accepted" },
-  { value: "submitted",label: "Submitted"},
-  { value: "approved", label: "Approved" },
+const totalTasks = 47;
+const activeDrones = 12;
+const monLocked = "234.5";
+
+const DEMO_TASKS: Task[] = [
+  {
+    id: "1",
+    title: "Agricultural Field Survey - Sector B7",
+    description: "Survey wheat fields in sector B7 for crop health analysis.",
+    requirements: {
+      minCoverage: 90,
+      maxDurationMinutes: 20,
+      altitudeRange: { min: 40, max: 60 },
+      additionalConstraints: [],
+    },
+    reward: "0.08",
+    status: "open",
+    creator: "0x0000000000000000000000000000000000000000",
+    acceptedBy: "0x0000000000000000000000000000000000000000",
+    deadline: 0,
+  },
+  {
+    id: "2",
+    title: "Infrastructure Inspection - Bridge MND-441",
+    description: "Inspect structural integrity of Bridge MND-441.",
+    requirements: {
+      minCoverage: 95,
+      maxDurationMinutes: 30,
+      altitudeRange: { min: 30, max: 50 },
+      additionalConstraints: [],
+    },
+    reward: "0.15",
+    status: "accepted",
+    creator: "0x0000000000000000000000000000000000000000",
+    acceptedBy: "0x0000000000000000000000000000000000000000",
+    deadline: 0,
+  },
+  {
+    id: "3",
+    title: "Security Perimeter Scan - Zone Alpha",
+    description: "Scan security perimeter of Zone Alpha for anomalies.",
+    requirements: {
+      minCoverage: 85,
+      maxDurationMinutes: 15,
+      altitudeRange: { min: 50, max: 70 },
+      additionalConstraints: [],
+    },
+    reward: "0.05",
+    status: "approved",
+    creator: "0x0000000000000000000000000000000000000000",
+    acceptedBy: "0x0000000000000000000000000000000000000000",
+    deadline: 0,
+  },
 ];
 
-// ── Page ──────────────────────────────────────
+// ── Status badge ──────────────────────────────────────────────────────────────
+
+const STATUS_STYLES: Record<string, string> = {
+  open:        "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30",
+  accepted:    "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
+  in_progress: "bg-blue-500/15 text-blue-400 border border-blue-500/30",
+  submitted:   "bg-purple-500/15 text-purple-400 border border-purple-500/30",
+  approved:    "bg-green-500/15 text-green-400 border border-green-500/30",
+  rejected:    "bg-red-500/15 text-red-400 border border-red-500/30",
+  expired:     "bg-gray-500/15 text-gray-400 border border-gray-500/30",
+};
+
+// ── Inline TaskCard ───────────────────────────────────────────────────────────
+
+function TaskCard({ task }: { task: Task }) {
+  const { requirements: req } = task;
+  const badgeClass = STATUS_STYLES[task.status] ?? STATUS_STYLES.expired;
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 hover:border-cyan-500/50 transition-all flex flex-col gap-3">
+      {/* Title */}
+      <p className="font-semibold text-white leading-snug">{task.title}</p>
+
+      {/* Reward + status row */}
+      <div className="flex items-center justify-between">
+        <span className="text-cyan-400 text-lg font-bold">{task.reward} MON</span>
+        <span className={`text-xs px-2.5 py-0.5 rounded-full font-medium capitalize ${badgeClass}`}>
+          {task.status.replace("_", " ")}
+        </span>
+      </div>
+
+      {/* Requirements summary */}
+      <p className="text-xs text-gray-400">
+        Coverage {req.minCoverage}% &nbsp;·&nbsp; {req.maxDurationMinutes} min &nbsp;·&nbsp;
+        {req.altitudeRange.min}–{req.altitudeRange.max} m
+      </p>
+
+      {/* Link */}
+      <div className="flex justify-end mt-auto">
+        <Link
+          href="/tasks/demo"
+          className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+        >
+          View Task →
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const [wallet,        setWallet]        = useState<WalletState>({ address: null, isConnected: false, chainId: null, balance: null });
-  const [tasks,         setTasks]         = useState<Task[]>(getMockTasks());
-  const [search,        setSearch]        = useState("");
-  const [statusFilter,  setStatusFilter]  = useState<TaskStatus | "all">("all");
-  const [accepting,     setAccepting]     = useState<string | null>(null);
-
-  // ── Filtering ──────────────────────────────
-  const filtered = tasks.filter((t) => {
-    const matchStatus = statusFilter === "all" || t.status === statusFilter;
-    const matchSearch =
-      !search ||
-      t.title.toLowerCase().includes(search.toLowerCase()) ||
-      t.description.toLowerCase().includes(search.toLowerCase());
-    return matchStatus && matchSearch;
-  });
-
-  // ── Accept handler ─────────────────────────
-  const handleAccept = async (taskId: string) => {
-    if (!wallet.address) return;
-    setAccepting(taskId);
-    try {
-      await acceptTask(taskId);
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === taskId
-            ? { ...t, status: "accepted", acceptedBy: wallet.address! }
-            : t
-        )
-      );
-    } catch (err) {
-      console.error("Accept failed:", err);
-    } finally {
-      setAccepting(null);
-    }
-  };
-
-  const handleWalletChange = useCallback((state: WalletState) => setWallet(state), []);
-
-  // ── Render ─────────────────────────────────
   return (
-    <div className="min-h-screen">
-      {/* ── Navbar ── */}
-      <nav className="sticky top-0 z-40 border-b border-white/8 backdrop-blur-xl bg-slate-950/70">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          {/* Logo */}
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <Zap size={16} className="text-white" />
-            </div>
-            <span className="font-bold text-white text-lg tracking-tight">
-              Drone<span className="text-violet-400">Chain</span>
-            </span>
-          </Link>
+    <div className="max-w-5xl mx-auto px-4 py-10 space-y-12">
 
-          {/* Nav links */}
-          <div className="hidden md:flex items-center gap-6 text-sm text-slate-400">
-            <Link href="/"       className="hover:text-slate-200 transition-colors">Marketplace</Link>
-            <Link href="/create" className="hover:text-slate-200 transition-colors">Post Task</Link>
-          </div>
+      {/* HEADER ROW */}
+      <div className="flex items-center justify-between">
+        <span className="text-2xl font-bold text-cyan-400">🚁 DroneChain</span>
+        <WalletConnect />
+      </div>
 
-          <WalletConnect onWalletChange={handleWalletChange} />
-        </div>
-      </nav>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* ── Hero ── */}
-        <section className="text-center mb-12">
-          <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20
-                          rounded-full px-4 py-1.5 text-xs text-violet-400 font-medium mb-5">
-            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-            Built on Monad Testnet
-          </div>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight
-                         bg-gradient-to-br from-white via-slate-200 to-slate-500 bg-clip-text text-transparent mb-4">
-            Autonomous Drone<br />Task Marketplace
-          </h1>
-          <p className="text-slate-400 text-lg max-w-2xl mx-auto mb-8">
-            Post missions, send drones, earn rewards. All verified on-chain by AI.
+      {/* HERO */}
+      <section className="space-y-8">
+        <div className="text-center space-y-3">
+          <h1 className="text-4xl font-bold">Autonomous Drone Task Marketplace</h1>
+          <p className="text-gray-400 text-lg">
+            AI-defined tasks. Autonomous execution. Trustless payments on Monad.
           </p>
-          <Link href="/create">
-            <Button
-              id="hero-create-btn"
-              className="bg-violet-600 hover:bg-violet-500 text-white font-semibold px-8 h-12
-                         rounded-xl text-base gap-2 shadow-[0_0_30px_rgba(139,92,246,0.4)]
-                         hover:shadow-[0_0_40px_rgba(139,92,246,0.6)] transition-all"
-            >
-              <PlusCircle size={18} /> Post a Task
-            </Button>
-          </Link>
-        </section>
+        </div>
 
-        {/* ── Stats bar ── */}
-        <div className="grid grid-cols-3 gap-4 mb-10">
+        {/* Stat boxes */}
+        <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Open Tasks",    value: tasks.filter((t) => t.status === "open").length    },
-            { label: "Total Rewards", value: `${tasks.reduce((s, t) => s + parseFloat(t.reward), 0).toFixed(2)} MON` },
-            { label: "Completed",     value: tasks.filter((t) => t.status === "approved").length },
-          ].map((s) => (
+            { icon: <Cpu size={22} className="text-cyan-400" />, value: totalTasks,    label: "Total Tasks"    },
+            { icon: <Radio size={22} className="text-cyan-400" />, value: activeDrones, label: "Active Drones"  },
+            { icon: <Lock size={22} className="text-cyan-400" />, value: `${monLocked} MON`, label: "MON Locked" },
+          ].map((stat) => (
             <div
-              key={s.label}
-              className="bg-slate-900/60 border border-white/8 rounded-2xl p-4 text-center"
+              key={stat.label}
+              className="bg-gray-800 rounded-xl p-6 flex flex-col items-center gap-2 text-center"
             >
-              <div className="text-2xl font-bold text-white">{s.value}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{s.label}</div>
+              {stat.icon}
+              <span className="text-2xl font-bold text-white">{stat.value}</span>
+              <span className="text-sm text-gray-400">{stat.label}</span>
             </div>
           ))}
         </div>
+      </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* ── Sidebar ── */}
-          <aside className="lg:col-span-1 space-y-5">
-            <ContractStatus />
-
-            {/* Status filter */}
-            <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-4 space-y-2">
-              <div className="flex items-center gap-2 text-sm text-slate-400 font-medium mb-1">
-                <SlidersHorizontal size={14} /> Filter
-              </div>
-              {STATUS_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  id={`filter-${f.value}`}
-                  onClick={() => setStatusFilter(f.value as TaskStatus | "all")}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-all
-                    ${statusFilter === f.value
-                      ? "bg-violet-600/20 text-violet-300 border border-violet-500/30"
-                      : "text-slate-400 hover:bg-white/5"
-                    }`}
-                >
-                  {f.label}
-                  <span className="float-right text-xs text-slate-600">
-                    {f.value === "all"
-                      ? tasks.length
-                      : tasks.filter((t) => t.status === f.value).length}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          {/* ── Task Grid ── */}
-          <section className="lg:col-span-3 space-y-5">
-            {/* Search */}
-            <div className="relative">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
-              <Input
-                id="task-search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search tasks…"
-                className="pl-10 bg-slate-900/60 border-white/8 text-slate-100
-                           placeholder:text-slate-600 focus:border-violet-500 h-11 rounded-xl"
-              />
-            </div>
-
-            {filtered.length === 0 ? (
-              <div className="text-center py-20 text-slate-500">
-                <p className="text-lg font-medium">No tasks found</p>
-                <p className="text-sm mt-1">Try a different filter or search term.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filtered.map((task) => (
-                  <TaskCard
-                    key={task.id}
-                    task={task}
-                    currentAddress={wallet.address}
-                    onAccept={handleAccept}
-                    isAccepting={accepting === task.id}
-                  />
-                ))}
-              </div>
-            )}
-          </section>
+      {/* TASK LIST */}
+      <section className="space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold">Open Tasks</h2>
+          <Link
+            href="/create"
+            className="px-4 py-2 bg-cyan-500 hover:bg-cyan-400 text-black font-semibold rounded-lg text-sm transition-colors"
+          >
+            + Create Task
+          </Link>
         </div>
-      </main>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {DEMO_TASKS.map((task) => (
+            <TaskCard key={task.id} task={task} />
+          ))}
+        </div>
+      </section>
+
     </div>
   );
 }

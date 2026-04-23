@@ -1,288 +1,322 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import {
-  ArrowLeft,
-  Zap,
-  Clock,
-  Coins,
-  User,
-  FileText,
-  AlertTriangle,
-  Loader2,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import WalletConnect from "@/components/WalletConnect";
 import DroneSimulator from "@/components/DroneSimulator";
 import VerificationPanel from "@/components/VerificationPanel";
-import { getMockTasks } from "@/lib/droneSimulator";
-import { submitProof, approveTask, rejectTask } from "@/lib/contract";
-import type { DroneProof, Task, WalletState } from "@/lib/types";
+import { simulateDroneEvaluation, generateDroneProof } from "@/lib/droneSimulator";
+import { verifyDroneTask } from "@/lib/aiService";
+import { acceptTask, submitProof, verifyAndPay } from "@/lib/contract";
+import type { Task, DroneEvaluation, VerificationResult, DroneProof } from "@/lib/types";
 
-// ── Status label map ─────────────────────────
-const STATUS_CLASSES: Record<Task["status"], string> = {
-  open:        "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  accepted:    "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  in_progress: "bg-amber-500/15 text-amber-400 border-amber-500/30",
-  submitted:   "bg-violet-500/15 text-violet-400 border-violet-500/30",
-  approved:    "bg-teal-500/15 text-teal-400 border-teal-500/30",
-  rejected:    "bg-red-500/15 text-red-400 border-red-500/30",
-  expired:     "bg-slate-500/15 text-slate-400 border-slate-500/30",
+// ── Demo task ─────────────────────────────────────────────────────────────────
+
+const DEMO_TASK: Task = {
+  id: "1",
+  title: "Agricultural Field Survey - Sector B7",
+  description:
+    "Capture comprehensive aerial imagery of the northern agricultural zone for crop health analysis. Ensure full coverage of irrigation systems and growth patterns.",
+  requirements: {
+    minCoverage: 90,
+    maxDurationMinutes: 20,
+    altitudeRange: { min: 40, max: 60 },
+    additionalConstraints: ["avoid residential zones", "capture in daylight only"],
+  },
+  reward: "0.08",
+  status: "open",
+  creator: "0x1234...abcd",
+  acceptedBy: "",
+  deadline: 0,
 };
 
-function formatDeadline(ts: number) {
-  return new Date(ts * 1000).toLocaleDateString("en-US", {
-    day: "numeric", month: "short", year: "numeric",
-  });
+// ── Notification toast ────────────────────────────────────────────────────────
+
+type Notification = { message: string; type: string };
+
+function Toast({ notification }: { notification: Notification }) {
+  const isSuccess = notification.type === "success";
+  return (
+    <div
+      className={`fixed top-4 right-4 z-50 px-5 py-3 rounded-lg text-sm font-medium shadow-lg ${
+        isSuccess ? "bg-green-600 text-white" : "bg-red-600 text-white"
+      }`}
+    >
+      {notification.message}
+    </div>
+  );
 }
 
-function shortenAddr(addr: string) {
-  if (!addr || addr === "0x0000000000000000000000000000000000000000") return "—";
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
+// ── Status badge ──────────────────────────────────────────────────────────────
 
-// ── Page ──────────────────────────────────────
+const STATUS_STYLES: Record<string, string> = {
+  open:        "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30",
+  accepted:    "bg-yellow-500/15 text-yellow-400 border border-yellow-500/30",
+  in_progress: "bg-blue-500/15 text-blue-400 border border-blue-500/30",
+  submitted:   "bg-purple-500/15 text-purple-400 border border-purple-500/30",
+  approved:    "bg-green-500/15 text-green-400 border border-green-500/30",
+  rejected:    "bg-red-500/15 text-red-400 border border-red-500/30",
+  expired:     "bg-gray-500/15 text-gray-400 border border-gray-500/30",
+};
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function TaskDetailPage() {
-  const params  = useParams();
-  const id = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] : "";
+  const params = useParams();
+  const idParam = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] : "demo";
 
-  const [wallet,      setWallet]      = useState<WalletState>({ address: null, isConnected: false, chainId: null, balance: null });
-  const [task,        setTask]        = useState<Task | null>(null);
-  const [proof,       setProof]       = useState<DroneProof | null>(null);
-  const [submitting,  setSubmitting]  = useState(false);
-  const [processing,  setProcessing]  = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [task,               setTask]               = useState<Task>(DEMO_TASK);
+  const [evaluation,         setEvaluation]         = useState<DroneEvaluation | null>(null);
+  const [verificationResult, setVerificationResult] = useState<VerificationResult | null>(null);
+  const [currentProof,       setCurrentProof]       = useState<DroneProof | null>(null);
+  const [isLoading,          setIsLoading]          = useState(false);
+  const [notification,       setNotification]       = useState<Notification | null>(null);
 
-  // Load task (mock for now; swap with fetchTask(id) when contract is live)
+  // Load task — use demo when id is "demo", otherwise fall back to DEMO_TASK
   useEffect(() => {
-    const found = getMockTasks().find((t) => t.id === id);
-    setTask(found ?? null);
-  }, [id]);
-
-  const handleWalletChange = useCallback(
-    (state: WalletState) => setWallet(state),
-    []
-  );
-
-  const handleProofGenerated = useCallback((p: DroneProof) => {
-    setProof(p);
-    setSubmitError(null);
-  }, []);
-
-  // ── Submit proof on-chain ──────────────────
-  const handleSubmitProof = async () => {
-    if (!proof || !wallet.address) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      await submitProof(proof);
-      setTask((t) => t ? { ...t, status: "submitted" } : t);
-    } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Submission failed");
-    } finally {
-      setSubmitting(false);
+    if (idParam !== "demo") {
+      // Real task loading would go here; fall back to demo for now
+      setTask(DEMO_TASK);
+    } else {
+      setTask(DEMO_TASK);
     }
-  };
+  }, [idParam]);
 
-  // ── Approve / Reject ───────────────────────
-  const handleApprove = async () => {
-    if (!task) return;
-    setProcessing(true);
-    try {
-      await approveTask(task.id);
-      setTask((t) => t ? { ...t, status: "approved" } : t);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setProcessing(false);
-    }
-  };
+  // Auto-dismiss notification
+  useEffect(() => {
+    if (!notification) return;
+    const t = setTimeout(() => setNotification(null), 3000);
+    return () => clearTimeout(t);
+  }, [notification]);
 
-  const handleReject = async () => {
-    if (!task) return;
-    setProcessing(true);
-    try {
-      await rejectTask(task.id);
-      setTask((t) => t ? { ...t, status: "rejected" } : t);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setProcessing(false);
-    }
-  };
+  // ── Handlers ─────────────────────────────────
 
-  const isCreator  = wallet.address?.toLowerCase() === task?.creator.toLowerCase();
-  const isOperator = wallet.address?.toLowerCase() === task?.acceptedBy.toLowerCase();
-  const canSubmit  = isOperator && proof && task?.status === "accepted";
-
-  // ── Loading / Not found ───────────────────
-  if (!task) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center text-slate-400">
-          <p className="text-lg font-medium">Task not found</p>
-          <Link href="/" className="text-violet-400 text-sm underline mt-2 inline-block">
-            ← Back to Marketplace
-          </Link>
-        </div>
-      </div>
-    );
+  function handleEvaluate(): DroneEvaluation {
+    const result = simulateDroneEvaluation(task);
+    setEvaluation(result);
+    return result;
   }
 
-  // ── Render ─────────────────────────────────
+  async function handleAccept() {
+    try {
+      await acceptTask(task.id);
+      setTask((t) => ({ ...t, status: "accepted" }));
+      setNotification({ message: "Task accepted!", type: "success" });
+    } catch (err) {
+      setNotification({
+        message: "Accept failed: " + (err instanceof Error ? err.message : String(err)),
+        type: "error",
+      });
+    }
+  }
+
+  async function handleSubmitProof(success: boolean) {
+    if (!evaluation) return;
+    setIsLoading(true);
+    try {
+      const proof = generateDroneProof(task, evaluation.droneId, success);
+      setCurrentProof(proof);
+      await submitProof(proof);
+      const result = await verifyDroneTask(task, proof);
+      setVerificationResult(result);
+    } catch (err) {
+      setNotification({
+        message: "Proof submission failed: " + (err instanceof Error ? err.message : String(err)),
+        type: "error",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleProcessPayment() {
+    if (!verificationResult) return;
+    try {
+      await verifyAndPay(Number(task.id), verificationResult.approved);
+      setNotification({ message: "Payment processed on Monad!", type: "success" });
+    } catch (err) {
+      setNotification({
+        message: "Payment failed: " + (err instanceof Error ? err.message : String(err)),
+        type: "error",
+      });
+    }
+  }
+
+  const badgeClass = STATUS_STYLES[task.status] ?? STATUS_STYLES.expired;
+  const req = task.requirements;
+
+  // ── Render ────────────────────────────────────
+
   return (
-    <div className="min-h-screen">
-      {/* Navbar */}
-      <nav className="sticky top-0 z-40 border-b border-white/8 backdrop-blur-xl bg-slate-950/70">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-          <Link href="/" className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 rounded-lg bg-violet-600 flex items-center justify-center">
-              <Zap size={16} className="text-white" />
-            </div>
-            <span className="font-bold text-white text-lg tracking-tight">
-              Drone<span className="text-violet-400">Chain</span>
+    <div className="max-w-4xl mx-auto px-4 py-10 space-y-8">
+
+      {/* Notification */}
+      {notification && <Toast notification={notification} />}
+
+      {/* Back link */}
+      <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-white transition-colors">
+        ← All Tasks
+      </Link>
+
+      {/* Task detail card */}
+      <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold text-white">{task.title}</h1>
+            <p className="text-sm text-gray-400">
+              Creator: <span className="font-mono text-gray-300">{task.creator}</span>
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-cyan-400 text-3xl font-bold">{task.reward} MON</p>
+            <span className={`inline-block mt-1 text-xs px-2.5 py-0.5 rounded-full font-medium capitalize ${badgeClass}`}>
+              {task.status.replace("_", " ")}
             </span>
-          </Link>
-          <WalletConnect onWalletChange={handleWalletChange} />
+          </div>
         </div>
-      </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        {/* Back */}
-        <Link
-          href="/"
-          className="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors mb-6"
-        >
-          <ArrowLeft size={14} /> Back to Marketplace
-        </Link>
+        <p className="text-gray-300 text-sm leading-relaxed">{task.description}</p>
 
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <Badge
-                variant="outline"
-                className={`text-xs font-medium border ${STATUS_CLASSES[task.status]}`}
+        {/* Requirements grid */}
+        <hr className="border-gray-700" />
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-gray-900 rounded-xl p-4 text-center">
+            <p className="text-xs text-gray-500 mb-1">Coverage</p>
+            <p className="text-white font-semibold">{req.minCoverage}%</p>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4 text-center">
+            <p className="text-xs text-gray-500 mb-1">Duration</p>
+            <p className="text-white font-semibold">{req.maxDurationMinutes} min</p>
+          </div>
+          <div className="bg-gray-900 rounded-xl p-4 text-center">
+            <p className="text-xs text-gray-500 mb-1">Altitude</p>
+            <p className="text-white font-semibold">{req.altitudeRange.min}–{req.altitudeRange.max} m</p>
+          </div>
+        </div>
+
+        {req.additionalConstraints.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {req.additionalConstraints.map((c, i) => (
+              <span key={i} className="text-xs bg-gray-700 text-gray-300 px-3 py-1 rounded-full">
+                {c}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Divider */}
+      <hr className="border-gray-700" />
+
+      {/* Interaction area */}
+      {verificationResult === null ? (
+        <div className="space-y-6">
+          {/* Drone evaluation */}
+          <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-white">Drone Evaluation</h2>
+              <button
+                onClick={handleEvaluate}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-semibold rounded-lg transition-colors"
               >
-                {task.status.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-              </Badge>
-              <span className="text-slate-600 text-xs font-mono">#{task.id}</span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white">{task.title}</h1>
-          </div>
-
-          {/* Reward */}
-          <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20
-                          rounded-2xl px-5 py-3 shrink-0">
-            <Coins size={20} className="text-amber-400" />
-            <span className="text-amber-400 font-extrabold text-2xl">{task.reward}</span>
-            <span className="text-slate-500 text-sm">MON</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* ── Left: Task details ── */}
-          <div className="lg:col-span-2 space-y-6">
-            {/* Description */}
-            <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-6 space-y-3">
-              <h2 className="text-slate-300 font-semibold flex items-center gap-2">
-                <FileText size={15} /> Description
-              </h2>
-              <p className="text-slate-400 text-sm leading-relaxed">{task.description}</p>
+                Evaluate Drone
+              </button>
             </div>
 
-            {/* Requirements */}
-            <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-6 space-y-4">
-              <h2 className="text-slate-300 font-semibold flex items-center gap-2">
-                <AlertTriangle size={15} className="text-amber-400" /> Requirements
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {[
-                  { label: "Min Coverage",  value: `${task.requirements.minCoverage}%`                                     },
-                  { label: "Max Duration",  value: `${task.requirements.maxDurationMinutes} min`                            },
-                  { label: "Altitude",      value: `${task.requirements.altitudeRange.min}–${task.requirements.altitudeRange.max}m` },
-                ].map((r) => (
-                  <div key={r.label} className="bg-slate-800/50 rounded-xl p-3 border border-white/5">
-                    <div className="text-xs text-slate-500">{r.label}</div>
-                    <div className="text-slate-200 font-semibold text-sm mt-0.5">{r.value}</div>
-                  </div>
-                ))}
-              </div>
-
-              {task.requirements.additionalConstraints.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {task.requirements.additionalConstraints.map((c, i) => (
-                    <span
-                      key={i}
-                      className="text-xs bg-violet-500/10 text-violet-300 border border-violet-500/20
-                                 px-3 py-1 rounded-full"
-                    >
-                      {c}
-                    </span>
-                  ))}
+            {evaluation ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Drone ID</p>
+                  <p className="text-white font-mono text-xs">{evaluation.droneId}</p>
                 </div>
-              )}
-            </div>
-
-            {/* Meta */}
-            <div className="bg-slate-900/60 border border-white/8 rounded-2xl p-6">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                {[
-                  { label: "Creator",   value: shortenAddr(task.creator),    icon: <User  size={13} /> },
-                  { label: "Operator",  value: shortenAddr(task.acceptedBy), icon: <User  size={13} /> },
-                  { label: "Deadline",  value: formatDeadline(task.deadline),icon: <Clock size={13} /> },
-                ].map((m) => (
-                  <div key={m.label}>
-                    <div className="text-slate-500 flex items-center gap-1.5 text-xs mb-0.5">
-                      {m.icon} {m.label}
-                    </div>
-                    <div className="text-slate-300 font-mono">{m.value}</div>
-                  </div>
-                ))}
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Battery</p>
+                  <p className={`font-semibold ${evaluation.batteryLevel >= 70 ? "text-green-400" : "text-red-400"}`}>
+                    {evaluation.batteryLevel}%
+                  </p>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Distance</p>
+                  <p className="text-white font-semibold">{evaluation.distanceKm} km</p>
+                </div>
+                <div className="bg-gray-900 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-0.5">Status</p>
+                  <p className={`font-semibold text-sm ${evaluation.canAccept ? "text-green-400" : "text-red-400"}`}>
+                    {evaluation.canAccept ? "Ready" : "Unavailable"}
+                  </p>
+                </div>
+                <div className="col-span-2 sm:col-span-4 text-xs text-gray-400 bg-gray-900 rounded-lg px-3 py-2">
+                  {evaluation.reason}
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="text-sm text-gray-500">Click "Evaluate Drone" to check availability.</p>
+            )}
 
-            {/* Submit proof button (operator only) */}
-            {canSubmit && (
-              <div className="space-y-2">
-                <Button
-                  id="submit-proof-btn"
-                  onClick={handleSubmitProof}
-                  disabled={submitting}
-                  className="w-full h-12 bg-violet-600 hover:bg-violet-500 text-white font-semibold
-                             text-base rounded-xl gap-2"
-                >
-                  {submitting ? (
-                    <><Loader2 size={18} className="animate-spin" /> Submitting…</>
-                  ) : (
-                    "Submit Proof On-Chain"
-                  )}
-                </Button>
-                {submitError && (
-                  <p className="text-xs text-red-400 text-center">{submitError}</p>
-                )}
-              </div>
+            {evaluation?.canAccept && task.status === "open" && (
+              <button
+                onClick={handleAccept}
+                className="w-full py-2.5 bg-green-600 hover:bg-green-500 text-white font-semibold rounded-lg transition-colors text-sm"
+              >
+                Accept Task
+              </button>
             )}
           </div>
 
-          {/* ── Right: Simulator + Verification ── */}
-          <div className="space-y-5">
-            <DroneSimulator task={task} onProofGenerated={handleProofGenerated} />
-            <VerificationPanel
-              task={task}
-              proof={proof}
-              isCreator={isCreator}
-              onApprove={handleApprove}
-              onReject={handleReject}
-              isProcessing={processing}
-            />
-          </div>
+          {/* Simulator */}
+          <DroneSimulator task={task} />
+
+          {/* Submit proof controls */}
+          {evaluation && (
+            <div className="bg-gray-800 border border-gray-700 rounded-xl p-5 space-y-3">
+              <h2 className="font-semibold text-white">Submit Proof</h2>
+              <p className="text-xs text-gray-400">Simulate mission outcome and submit proof for AI verification.</p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => handleSubmitProof(true)}
+                  disabled={isLoading}
+                  className="flex-1 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors text-sm"
+                >
+                  {isLoading ? "Verifying…" : "Submit Successful Proof"}
+                </button>
+                <button
+                  onClick={() => handleSubmitProof(false)}
+                  disabled={isLoading}
+                  className="flex-1 py-2.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-semibold rounded-lg transition-colors text-sm"
+                >
+                  Submit Failed Proof
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      </main>
+      ) : (
+        <div className="space-y-5">
+          <VerificationPanel
+            task={task}
+            proof={currentProof}
+            isProcessing={isLoading}
+          />
+
+          <button
+            onClick={handleProcessPayment}
+            disabled={isLoading}
+            className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-bold rounded-xl transition-colors"
+          >
+            Process Payment on Monad
+          </button>
+
+          <button
+            onClick={() => {
+              setVerificationResult(null);
+              setCurrentProof(null);
+            }}
+            className="w-full py-2.5 text-sm text-gray-400 hover:text-white transition-colors"
+          >
+            ← Run Another Simulation
+          </button>
+        </div>
+      )}
     </div>
   );
 }
