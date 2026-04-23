@@ -1,6 +1,6 @@
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 //  DroneChain – Last-Mile Delivery Network Types
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 export enum TaskStatus {
   OPEN,
@@ -106,4 +106,63 @@ export interface VerificationResult {
     passed: boolean;
   }[];
   confidenceScore: number;
+}
+export interface WalletState {
+  address: string | null;
+  isConnected: boolean;
+  chainId: number | null;
+  balance: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Legacy / Backward-Compatible Types (used by contract.ts, aiService.ts)
+//  These map the old aerial-survey domain to the new delivery domain.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TaskStatusString =
+  | "open"
+  | "accepted"
+  | "in_progress"
+  | "submitted"
+  | "approved"
+  | "rejected"
+  | "expired";
+
+export interface TaskRequirements {
+  minCoverage: number;
+  maxDurationMinutes: number;
+  altitudeRange: { min: number; max: number };
+  additionalConstraints: string[];
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  requirements: TaskRequirements;
+  reward: string;
+  status: TaskStatusString;
+  creator: string;
+  acceptedBy: string;
+  deadline: number;
+}
+
+/** Used by the old createTask overload in contract.ts */
+export interface CreateTaskPayload {
+  title: string;
+  description: string;
+  deadline: number;
+  requirements: TaskRequirements;
+  rewardEth: string;
+}
+
+/** Old proof shape used by contract.ts submitProof overload */
+export interface DroneProof {
+  taskId: string;
+  droneId: string;
+  coveragePercent: number;
+  durationMinutes: number;
+  altitude: number;
+  timestamp: number;
+  rawData?: Record<string, unknown>;
 }

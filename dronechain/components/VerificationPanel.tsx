@@ -5,14 +5,10 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import type { DroneProof, Task, VerificationResult } from "@/lib/types";
+import type { DroneProof, DeliveryProof, Task } from "@/lib/types";
 
 // ── Criterion Row ─────────────────────────────
 
@@ -51,7 +47,7 @@ function CriterionRow({ label, passed, actual, required }: CriterionRowProps) {
 
 interface VerificationPanelProps {
   task: Task;
-  proof: DroneProof | null;
+  proof: DroneProof | DeliveryProof | null;
   /** If provided, the panel can also trigger the on-chain approve/reject */
   isCreator?: boolean;
   onApprove?: () => void;
@@ -67,70 +63,59 @@ export default function VerificationPanel({
   onReject,
   isProcessing,
 }: VerificationPanelProps) {
-  const [result,    setResult]    = useState<VerificationResult | null>(null);
-  const [verifying, setVerifying] = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
-  const [expanded,  setExpanded]  = useState(false);
-
   // ── Derive per-criterion pass/fail from proof ──
   const criteria = proof
-    ? [
-        {
-          label:    "Coverage",
-          passed:   proof.coveragePercent >= task.requirements.minCoverage,
-          actual:   `${proof.coveragePercent.toFixed(1)}%`,
-          required: `≥${task.requirements.minCoverage}%`,
-        },
-        {
-          label:    "Duration",
-          passed:   proof.durationMinutes <= task.requirements.maxDurationMinutes,
-          actual:   `${proof.durationMinutes.toFixed(1)} min`,
-          required: `≤${task.requirements.maxDurationMinutes} min`,
-        },
-        {
-          label:    "Altitude (min)",
-          passed:   proof.altitude >= task.requirements.altitudeRange.min,
-          actual:   `${proof.altitude.toFixed(1)} m`,
-          required: `≥${task.requirements.altitudeRange.min} m`,
-        },
-        {
-          label:    "Altitude (max)",
-          passed:   proof.altitude <= task.requirements.altitudeRange.max,
-          actual:   `${proof.altitude.toFixed(1)} m`,
-          required: `≤${task.requirements.altitudeRange.max} m`,
-        },
-      ]
+    ? (() => {
+        // DeliveryProof shape (new)
+        if ("deliveryConfirmed" in proof) {
+          const dp = proof as DeliveryProof;
+          return [
+            {
+              label:    "Delivery Confirmed",
+              passed:   dp.deliveryConfirmed,
+              actual:   dp.deliveryConfirmed ? "Yes" : "No",
+              required: "Yes",
+            },
+            {
+              label:    "Duration",
+              passed:   dp.durationMinutes <= 60,
+              actual:   `${dp.durationMinutes.toFixed(1)} min`,
+              required: "≤60 min",
+            },
+            {
+              label:    "Distance Covered",
+              passed:   dp.distanceCovered > 0,
+              actual:   `${dp.distanceCovered.toFixed(2)} km`,
+              required: ">0 km",
+            },
+            {
+              label:    "Battery Usage",
+              passed:   dp.batteryStart - dp.batteryEnd <= 40,
+              actual:   `${(dp.batteryStart - dp.batteryEnd).toFixed(1)}%`,
+              required: "≤40% drain",
+            },
+          ];
+        }
+        // Legacy DroneProof shape (old)
+        const lp = proof as DroneProof;
+        return [
+          {
+            label:    "Coverage",
+            passed:   lp.coveragePercent >= task.requirements.minCoverage,
+            actual:   `${lp.coveragePercent.toFixed(1)}%`,
+            required: `≥${task.requirements.minCoverage}%`,
+          },
+          {
+            label:    "Duration",
+            passed:   lp.durationMinutes <= task.requirements.maxDurationMinutes,
+            actual:   `${lp.durationMinutes.toFixed(1)} min`,
+            required: `≤${task.requirements.maxDurationMinutes} min`,
+          },
+        ];
+      })()
     : [];
 
   const localApproved = criteria.length > 0 && criteria.every((c) => c.passed);
-
-  // ── AI Verification call ───────────────────
-  const runAiVerification = async () => {
-    if (!proof) return;
-    setVerifying(true);
-    setError(null);
-    setResult(null);
-
-    try {
-      const res = await fetch("/api/verify", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ task, proof }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `Server error ${res.status}`);
-      }
-
-      const data: VerificationResult = await res.json();
-      setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Verification failed");
-    } finally {
-      setVerifying(false);
-    }
-  };
 
   // ── Render ─────────────────────────────────
   return (
@@ -171,77 +156,6 @@ export default function VerificationPanel({
                 ? <><CheckCircle2 size={16} /> Local check: All criteria met</>
                 : <><XCircle size={16} /> Local check: Criteria not met</>
               }
-            </div>
-
-            {/* AI Verification */}
-            <div className="border border-white/5 rounded-xl bg-slate-800/40 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400 font-medium">AI Verification (Claude)</span>
-                <Button
-                  id="ai-verify-btn"
-                  size="sm"
-                  onClick={runAiVerification}
-                  disabled={verifying || !proof}
-                  className="h-7 text-xs bg-violet-600 hover:bg-violet-500 text-white px-3 gap-1"
-                >
-                  {verifying
-                    ? <><Loader2 size={12} className="animate-spin" /> Verifying…</>
-                    : <><Send size={12} /> Run AI Check</>
-                  }
-                </Button>
-              </div>
-
-              {error && (
-                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                  {error}
-                </p>
-              )}
-
-              {result && (
-                <div className="space-y-2">
-                  <div
-                    className={`flex items-center gap-2 text-sm font-semibold
-                      ${result.approved ? "text-emerald-400" : "text-red-400"}`}
-                  >
-                    {result.approved
-                      ? <CheckCircle2 size={16} />
-                      : <XCircle size={16} />
-                    }
-                    {result.approved ? "Approved by AI" : "Rejected by AI"}
-                  </div>
-
-                  {/* Reasoning (expandable) */}
-                  <div className="bg-slate-900/60 rounded-lg p-3">
-                    <button
-                      onClick={() => setExpanded((e) => !e)}
-                      className="flex items-center justify-between w-full text-xs text-slate-400 hover:text-slate-200"
-                    >
-                      <span>Reasoning</span>
-                      {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                    </button>
-                    {expanded && (
-                      <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-                        {result.reasoning}
-                      </p>
-                    )}
-                  </div>
-
-                  {/* Failed criteria */}
-                  {result.failedCriteria.length > 0 && (
-                    <div className="space-y-1">
-                      {result.failedCriteria.map((fc, i) => (
-                        <div
-                          key={i}
-                          className="text-xs text-red-300 bg-red-500/8 border border-red-500/20
-                                     rounded-lg px-3 py-1.5 flex items-center gap-1.5"
-                        >
-                          <XCircle size={11} /> {fc}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
             {/* Creator approve / reject */}

@@ -1,9 +1,9 @@
-import { Task, DroneProof, TaskRequirements, VerificationResult } from "./types";
+import type { Task, DroneProof, VerificationResult } from "./types";
 
 export async function generateTaskRequirements(
   title: string,
   description: string
-): Promise<TaskRequirements & { reasoning: string }> {
+): Promise<{ reasoning: string; [key: string]: unknown }> {
   const response = await fetch("/api/generate-requirements", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

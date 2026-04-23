@@ -1,81 +1,342 @@
-// ─────────────────────────────────────────────
-//  DroneChain – Mock Drone Telemetry Generator
-// ─────────────────────────────────────────────
-import type { DroneEvaluation, DroneProof, Task, TaskRequirements } from "./types";
-
-// ── Drone ID Pool ────────────────────────────
-
-const DRONE_PREFIXES = ["HAWK", "EAGLE", "VIPER", "GHOST", "STORM"];
-const DRONE_VARIANTS = ["X1", "X2", "PRO", "LITE", "MAX"];
+import { DeliveryCategory, TaskStatus } from "./types";
+import type {
+  DeliveryCheckpoint,
+  DeliveryProof,
+  DeliveryTask,
+  DroneEvaluation,
+  DroneProof,
+  DroneSpec,
+  Task,
+  TaskRequirements,
+} from "./types";
 
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-/** Generates a random plausible drone serial */
-export function generateDroneId(): string {
-  const prefix = DRONE_PREFIXES[Math.floor(Math.random() * DRONE_PREFIXES.length)];
-  const variant = DRONE_VARIANTS[Math.floor(Math.random() * DRONE_VARIANTS.length)];
-  const serial = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}-${variant}-${serial}`;
+function randFloat(min: number, max: number, decimals = 1): number {
+  return parseFloat((min + Math.random() * (max - min)).toFixed(decimals));
 }
 
-/** Returns a random DroneChain-formatted drone ID */
-export function getRandomDroneId(): string {
-  return `DRONE-MND-${randInt(1000, 9999)}`;
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
-/** Evaluates whether a drone can accept a task based on battery and range */
-export function simulateDroneEvaluation(task: Task): DroneEvaluation {
-  void task;
-  const batteryLevel = randInt(55, 100);
-  const distanceKm = Number((1 + Math.random() * 14).toFixed(1));
-  const canAccept = batteryLevel >= 70 && distanceKm <= 10;
+export const DEMO_FLEET: DroneSpec[] = [
+  {
+    id: "DRONE-MND-4721",
+    name: "Falcon Delivery Pro",
+    maxPayloadKg: 3,
+    maxRangeKm: 12,
+    maxFlightMinutes: 45,
+    hasCoolingBay: true,
+    hasSecureCompartment: true,
+    homeLocation: "Kadıkoy Hub",
+    ownerAddress: "0x1234567890123456789012345678901234567890",
+    batteryLevel: 87,
+    status: "AVAILABLE",
+    totalDeliveries: 234,
+    successRate: 97.4,
+    earnedTotal: "11.2",
+  },
+  {
+    id: "DRONE-MND-1337",
+    name: "SwiftBot Mini",
+    maxPayloadKg: 1.5,
+    maxRangeKm: 8,
+    maxFlightMinutes: 30,
+    hasCoolingBay: false,
+    hasSecureCompartment: false,
+    homeLocation: "Besiktas Hub",
+    ownerAddress: "0x2345678901234567890123456789012345678901",
+    batteryLevel: 62,
+    status: "AVAILABLE",
+    totalDeliveries: 89,
+    successRate: 94.1,
+    earnedTotal: "4.4",
+  },
+  {
+    id: "DRONE-MND-9001",
+    name: "HeavyLifter X",
+    maxPayloadKg: 8,
+    maxRangeKm: 20,
+    maxFlightMinutes: 60,
+    hasCoolingBay: false,
+    hasSecureCompartment: true,
+    homeLocation: "Umraniye Hub",
+    ownerAddress: "0x3456789012345678901234567890123456789012",
+    batteryLevel: 91,
+    status: "IN_MISSION",
+    totalDeliveries: 512,
+    successRate: 98.9,
+    earnedTotal: "25.6",
+  },
+];
 
-  let reason = "Battery and range within acceptable parameters";
-  if (batteryLevel < 70) {
-    reason = "Insufficient battery level for mission";
-  } else if (distanceKm > 10) {
-    reason = "Target location exceeds operational range";
+export function getFleet(): DroneSpec[] {
+  if (typeof window === "undefined") return DEMO_FLEET;
+  try {
+    const raw = localStorage.getItem("dronechain_fleet");
+    if (raw) {
+      const parsed = JSON.parse(raw) as DroneSpec[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore storage parse errors and fall back to demo fleet
+  }
+  return DEMO_FLEET;
+}
+
+function normalizeCategory(text: string): DeliveryCategory {
+  if (/(food|meal|restaurant|hot)/.test(text)) return DeliveryCategory.FOOD;
+  if (/(grocery|market|produce|fresh)/.test(text)) return DeliveryCategory.GROCERY;
+  if (/(pharmacy|medicine|medical|drug|vaccine)/.test(text)) return DeliveryCategory.PHARMACY;
+  if (/(document|contract|paper|legal|signature)/.test(text)) return DeliveryCategory.DOCUMENT;
+  return DeliveryCategory.CARGO;
+}
+
+function normalizeTaskStatus(status: unknown): TaskStatus {
+  const value = String(status ?? "").toLowerCase();
+  switch (value) {
+    case "accepted":
+      return TaskStatus.ACCEPTED;
+    case "in_transit":
+      return TaskStatus.IN_TRANSIT;
+    case "delivered":
+    case "submitted":
+      return TaskStatus.DELIVERED;
+    case "verified":
+    case "approved":
+      return TaskStatus.VERIFIED;
+    case "failed":
+    case "rejected":
+      return TaskStatus.FAILED;
+    case "cancelled":
+    case "canceled":
+      return TaskStatus.CANCELLED;
+    default:
+      return TaskStatus.OPEN;
+  }
+}
+
+export function toDeliveryTask(task: Task | DeliveryTask): DeliveryTask {
+  if ("category" in task) {
+    return task;
   }
 
+  const legacy = task as Task & {
+    requirements: TaskRequirements & {
+      distanceKm?: number;
+      maxWeightKg?: number;
+      pickupLocation?: string;
+      dropoffLocation?: string;
+      requiresCooling?: boolean;
+      requiresSignature?: boolean;
+      isFragile?: boolean;
+    };
+    reward?: string;
+    status?: unknown;
+    creator?: string;
+    acceptedBy?: string;
+    createdAt?: number;
+    completedAt?: number;
+    proofHash?: string;
+    deadline?: number;
+    description?: string;
+  };
+
+  const text = `${legacy.title ?? ""} ${legacy.description ?? ""}`.toLowerCase();
+  const maxDeliveryMinutes = legacy.requirements.maxDurationMinutes;
+  const distanceKm = typeof legacy.requirements.distanceKm === "number"
+    ? legacy.requirements.distanceKm
+    : parseFloat(Math.max(1.2, maxDeliveryMinutes * 0.21).toFixed(1));
+
   return {
-    droneId: getRandomDroneId(),
-    batteryLevel,
-    distanceKm,
-    canAccept,
-    reason,
+    id: Number(legacy.id) || 0,
+    title: legacy.title,
+    category: normalizeCategory(text),
+    requirements: {
+      maxWeightKg: typeof legacy.requirements.maxWeightKg === "number"
+        ? legacy.requirements.maxWeightKg
+        : parseFloat(Math.max(1.2, (legacy.requirements.minCoverage ?? 90) / 30).toFixed(1)),
+      isFragile: typeof legacy.requirements.isFragile === "boolean"
+        ? legacy.requirements.isFragile
+        : /(fragile|glass|electronics|medical)/.test(text),
+      requiresCooling: typeof legacy.requirements.requiresCooling === "boolean"
+        ? legacy.requirements.requiresCooling
+        : /(food|grocery|fresh|pharmacy|medicine|cold|ice)/.test(text),
+      requiresSignature: typeof legacy.requirements.requiresSignature === "boolean"
+        ? legacy.requirements.requiresSignature
+        : /(document|contract|legal|signature|parcel)/.test(text),
+      maxDeliveryMinutes,
+      pickupLocation: legacy.requirements.pickupLocation ?? "City Hub",
+      dropoffLocation: legacy.requirements.dropoffLocation ?? legacy.title,
+      distanceKm,
+    },
+    rewardEth: String((legacy as { rewardEth?: string; reward?: string }).rewardEth ?? legacy.reward ?? "0.00"),
+    status: normalizeTaskStatus(legacy.status),
+    creator: legacy.creator ?? "0x0000000000000000000000000000000000000000",
+    assignedDrone: legacy.acceptedBy ?? "",
+    createdAt: legacy.createdAt ?? Date.now(),
+    completedAt: legacy.completedAt ?? 0,
+    proofHash: legacy.proofHash ?? "",
+    deadline: legacy.deadline ?? 0,
   };
 }
 
-/** Generates proof payload for either successful or failed mission outcomes */
-export function generateDroneProof(task: Task, droneId: string, success: boolean): DroneProof {
-  const requirements: TaskRequirements = task.requirements;
-  const timestamp = Math.floor(Date.now() / 1000);
-  const altitudeMid =
-    (requirements.altitudeRange.min + requirements.altitudeRange.max) / 2;
+export function evaluateFleetForDelivery(task: DeliveryTask): DroneEvaluation[] {
+  const req = task.requirements;
+  const requiredRoundTripKm = req.distanceKm * 2;
+  const fleet = getFleet();
 
-  let coveragePercent: number;
-  let durationMinutes: number;
-  let altitude: number;
+  return fleet
+    .map((drone) => {
+      const isAvailable = drone.status === "AVAILABLE";
+      const payloadOk = drone.maxPayloadKg >= req.maxWeightKg;
+      const rangeOk = drone.maxRangeKm >= requiredRoundTripKm;
+      const coolingOk = !req.requiresCooling || drone.hasCoolingBay;
+      const batteryOk = drone.batteryLevel >= 70;
+      const flightTimeOk = drone.maxFlightMinutes >= req.maxDeliveryMinutes;
 
-  if (success) {
-    coveragePercent = randInt(92, 98);
-    durationMinutes = requirements.maxDurationMinutes - randInt(2, 5);
-    altitude = Math.round(altitudeMid + randInt(-5, 5));
-  } else {
-    coveragePercent = randInt(92, 98);
-    durationMinutes = requirements.maxDurationMinutes - randInt(2, 5);
-    altitude = Math.round(altitudeMid + randInt(-5, 5));
+      const canAccept = isAvailable && payloadOk && rangeOk && coolingOk && batteryOk && flightTimeOk;
 
-    const failureType = randInt(0, 2);
-    if (failureType === 0) {
-      coveragePercent = 65;
-    } else if (failureType === 1) {
-      durationMinutes = requirements.maxDurationMinutes + 10;
-    } else {
-      altitude = requirements.altitudeRange.max + randInt(8, 15);
+      let reason = "All requirements met";
+      if (!isAvailable) {
+        reason = `Drone is ${drone.status.toLowerCase().replace("_", " ")}`;
+      } else if (!payloadOk) {
+        reason = `Payload too low (${drone.maxPayloadKg}kg < ${req.maxWeightKg}kg)`;
+      } else if (!rangeOk) {
+        reason = `Range too short (${drone.maxRangeKm}km < ${requiredRoundTripKm.toFixed(1)}km round trip)`;
+      } else if (!coolingOk) {
+        reason = "Cooling bay required";
+      } else if (!batteryOk) {
+        reason = `Battery too low (${drone.batteryLevel}% < 70%)`;
+      } else if (!flightTimeOk) {
+        reason = `Flight time too short (${drone.maxFlightMinutes}min < ${req.maxDeliveryMinutes}min)`;
+      }
+
+      const batteryScore = (clamp(drone.batteryLevel, 0, 100) / 100) * 30;
+      const rangeMargin = drone.maxRangeKm / Math.max(requiredRoundTripKm, 0.1);
+      const rangeScore = clamp(rangeMargin, 0, 1.4) / 1.4 * 30;
+      const payloadMargin = drone.maxPayloadKg / Math.max(req.maxWeightKg, 0.1);
+      const payloadScore = clamp(payloadMargin, 0, 1.6) / 1.6 * 20;
+      const deliveryExperience = clamp(drone.totalDeliveries / 600, 0, 1);
+      const deliveriesScore = deliveryExperience * 20;
+      const suitabilityScore = parseFloat((batteryScore + rangeScore + payloadScore + deliveriesScore).toFixed(1));
+
+      const estimatedMinutes = parseFloat(
+        ((req.distanceKm / 0.45) + 2).toFixed(0)
+      );
+
+      return {
+        droneId: drone.id,
+        droneName: drone.name,
+        canAccept,
+        reason,
+        batteryLevel: drone.batteryLevel,
+        distanceKm: req.distanceKm,
+        estimatedMinutes,
+        payloadCapacityOk: payloadOk,
+        coolingAvailable: drone.hasCoolingBay,
+        suitabilityScore,
+      };
+    })
+    .sort((a, b) => b.suitabilityScore - a.suitabilityScore);
+}
+
+const CHECKPOINT_STATUSES = [
+  "Ascending",
+  "En route",
+  "Approaching destination",
+  "Descending",
+  "Delivered",
+] as const;
+
+export function simulateDelivery(
+  drone: DroneSpec,
+  task: DeliveryTask,
+  success: boolean
+): DeliveryProof {
+  const req = task.requirements;
+  const now = Date.now();
+  const batteryStart = drone.batteryLevel;
+  const rawDrain = (req.distanceKm / Math.max(drone.maxRangeKm, 0.1)) * 40 + randFloat(5, 10);
+  const batteryDrain = parseFloat(rawDrain.toFixed(1));
+  const idealBatteryEnd = clamp(parseFloat((batteryStart - batteryDrain).toFixed(1)), 0, 100);
+  const failureCheckpointIndex = randInt(2, 3); // checkpoint 3 or 4
+
+  const checkpointIntervalMs = Math.floor((req.maxDeliveryMinutes * 60 * 1000) / 5);
+  const checkpoints: DeliveryCheckpoint[] = [];
+
+  for (let i = 0; i < 5; i += 1) {
+    const progress = (i + 1) * 20;
+    const descendingNow = i >= 3;
+    const altitude = descendingNow ? randFloat(15, 25) : randFloat(25, 45);
+    const projectedBattery = clamp(
+      parseFloat((batteryStart - (batteryDrain * ((i + 1) / 5))).toFixed(1)),
+      0,
+      100
+    );
+
+    if (!success && i > failureCheckpointIndex) break;
+
+    checkpoints.push({
+      progress,
+      altitude,
+      batteryLevel: projectedBattery,
+      timestamp: now + (checkpointIntervalMs * i),
+      status: CHECKPOINT_STATUSES[i],
+    });
+
+    if (!success && i === failureCheckpointIndex) {
+      checkpoints[checkpoints.length - 1].status = "Signal lost";
+      break;
     }
+  }
+
+  const lastBattery = checkpoints.at(-1)?.batteryLevel ?? idealBatteryEnd;
+  const durationMinutes = success
+    ? parseFloat(randFloat(Math.max(8, req.maxDeliveryMinutes * 0.55), Math.max(10, req.maxDeliveryMinutes * 0.9)).toFixed(1))
+    : parseFloat(randFloat(Math.max(4, req.maxDeliveryMinutes * 0.35), Math.max(6, req.maxDeliveryMinutes * 0.65)).toFixed(1));
+
+  const distanceCovered = success
+    ? req.distanceKm
+    : parseFloat((req.distanceKm * randFloat(0.45, 0.8)).toFixed(2));
+
+  return {
+    taskId: task.id,
+    droneId: drone.id,
+    batteryStart,
+    batteryEnd: success ? idealBatteryEnd : lastBattery,
+    distanceCovered,
+    durationMinutes,
+    checkpoints,
+    deliveryConfirmed: success,
+    timestamp: now,
+  };
+}
+
+export function simulateDroneEvaluation(task: Task | DeliveryTask): DroneEvaluation {
+  const evaluations = evaluateFleetForDelivery(toDeliveryTask(task));
+  return evaluations.find((evaluation) => evaluation.canAccept) ?? evaluations[0];
+}
+
+export function generateDroneProof(task: Task, droneId: string, success: boolean): DroneProof {
+  const requirements = task.requirements as TaskRequirements;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const altitudeMid = (requirements.altitudeRange.min + requirements.altitudeRange.max) / 2;
+
+  let coveragePercent = randInt(92, 98);
+  let durationMinutes = requirements.maxDurationMinutes - randInt(2, 5);
+  let altitude = Math.round(altitudeMid + randInt(-5, 5));
+
+  if (!success) {
+    const failureType = randInt(0, 2);
+    if (failureType === 0) coveragePercent = 65;
+    else if (failureType === 1) durationMinutes = requirements.maxDurationMinutes + 10;
+    else altitude = requirements.altitudeRange.max + randInt(8, 15);
   }
 
   return {
@@ -91,282 +352,4 @@ export function generateDroneProof(task: Task, droneId: string, success: boolean
       weatherCondition: "clear",
     },
   };
-}
-
-// ── Telemetry Helpers ─────────────────────────
-
-/** Returns a float between [min, max] rounded to `decimals` places */
-function randBetween(min: number, max: number, decimals = 1): number {
-  const val = min + Math.random() * (max - min);
-  return parseFloat(val.toFixed(decimals));
-}
-
-/** Adds random noise (±noisePercent%) to a value without going outside [min, max] */
-function addNoise(value: number, noisePercent: number, min: number, max: number): number {
-  const noise = value * (noisePercent / 100) * (Math.random() * 2 - 1);
-  return Math.max(min, Math.min(max, parseFloat((value + noise).toFixed(1))));
-}
-
-// ── Simulation Modes ──────────────────────────
-
-export type SimulationMode = "compliant" | "non_compliant" | "borderline";
-
-/**
- * Determines the telemetry deviation strategy for each metric based on mode:
- * - compliant: values are within spec + small noise
- * - non_compliant: at least one metric falls outside spec
- * - borderline: values are right at the edge of spec
- */
-interface SimConfig {
-  coverageMultiplier: number; // multiply minCoverage to get target coverage
-  durationMultiplier: number; // multiply maxDuration to get target duration
-  altitudeBias: number;       // metres added to midpoint altitude (can be negative)
-  noisePercent: number;       // ±% noise applied to all values
-}
-
-const SIM_CONFIGS: Record<SimulationMode, SimConfig> = {
-  compliant: {
-    coverageMultiplier: 1.05,
-    durationMultiplier: 0.85,
-    altitudeBias: 0,
-    noisePercent: 3,
-  },
-  non_compliant: {
-    coverageMultiplier: 0.75,  // under-delivers coverage
-    durationMultiplier: 1.15,  // runs over time
-    altitudeBias: 30,          // flies too high
-    noisePercent: 5,
-  },
-  borderline: {
-    coverageMultiplier: 1.0,
-    durationMultiplier: 1.0,
-    altitudeBias: 0,
-    noisePercent: 1,
-  },
-};
-
-// ── Main Simulator ────────────────────────────
-
-/**
- * Generates realistic mock drone telemetry for a given task and simulation mode.
- *
- * @param task          - The task whose requirements drive the simulation
- * @param mode          - Compliance mode controlling whether proof should pass
- * @param overrideDroneId - Optional fixed drone ID (random if omitted)
- */
-export function simulateDroneProof(
-  task: Task,
-  mode: SimulationMode = "compliant",
-  overrideDroneId?: string
-): DroneProof {
-  const req: TaskRequirements = task.requirements;
-  const cfg = SIM_CONFIGS[mode];
-
-  // Coverage: target = minCoverage × multiplier, capped at 100
-  const targetCoverage = Math.min(100, req.minCoverage * cfg.coverageMultiplier);
-  const coveragePercent = addNoise(targetCoverage, cfg.noisePercent, 0, 100);
-
-  // Duration: target = maxDuration × multiplier
-  const targetDuration = req.maxDurationMinutes * cfg.durationMultiplier;
-  const durationMinutes = addNoise(targetDuration, cfg.noisePercent, 1, 999);
-
-  // Altitude: midpoint of allowed range ± bias
-  const altMid = (req.altitudeRange.min + req.altitudeRange.max) / 2 + cfg.altitudeBias;
-  const altitude = addNoise(
-    altMid,
-    cfg.noisePercent,
-    req.altitudeRange.min - 50, // allow slight overshoot for non_compliant
-    req.altitudeRange.max + 50
-  );
-
-  return {
-    taskId: task.id,
-    coveragePercent,
-    durationMinutes,
-    altitude,
-    timestamp: Date.now(),
-    droneId: overrideDroneId ?? generateDroneId(),
-  };
-}
-
-// ── Telemetry Stream Simulator ────────────────
-
-export interface TelemetryFrame {
-  /** Seconds elapsed since mission start */
-  elapsed: number;
-  /** Current altitude in metres */
-  altitude: number;
-  /** Coverage achieved so far (%) */
-  coverage: number;
-  /** Battery remaining (%) */
-  battery: number;
-  /** GPS latitude (mock) */
-  lat: number;
-  /** GPS longitude (mock) */
-  lng: number;
-  /** Speed in m/s */
-  speed: number;
-}
-
-/**
- * Generates a time-series array of telemetry frames simulating a drone mission.
- * Useful for animating the DroneSimulator UI component.
- *
- * @param durationMinutes - Total planned mission duration
- * @param altitudeTarget  - Target cruise altitude in metres
- * @param framesCount     - Number of frames to generate
- * @param originLat       - Starting GPS latitude
- * @param originLng       - Starting GPS longitude
- */
-export function generateTelemetryStream(
-  durationMinutes: number,
-  altitudeTarget: number,
-  framesCount = 60,
-  originLat = 41.015137,
-  originLng = 28.979530
-): TelemetryFrame[] {
-  const frames: TelemetryFrame[] = [];
-  const totalSeconds = durationMinutes * 60;
-  const stepSeconds = totalSeconds / framesCount;
-
-  let battery = 100;
-  let coverage = 0;
-  let lat = originLat;
-  let lng = originLng;
-
-  for (let i = 0; i < framesCount; i++) {
-    const t = i / framesCount; // normalised 0→1
-
-    // Altitude: ramp up first 10%, cruise, ramp down last 10%
-    let altitude: number;
-    if (t < 0.1) {
-      altitude = altitudeTarget * (t / 0.1);
-    } else if (t > 0.9) {
-      altitude = altitudeTarget * ((1 - t) / 0.1);
-    } else {
-      altitude = altitudeTarget;
-    }
-    altitude = addNoise(altitude, 2, 0, altitudeTarget * 1.5);
-
-    // Coverage increases roughly linearly (± noise)
-    coverage = Math.min(100, addNoise(t * 105, 3, 0, 100));
-
-    // Battery drains linearly from 100→15
-    battery = parseFloat((100 - t * 85).toFixed(1));
-
-    // GPS drift (simulate a patrol grid)
-    lat += randBetween(-0.0002, 0.0002, 6);
-    lng += randBetween(-0.0002, 0.0002, 6);
-
-    frames.push({
-      elapsed: parseFloat((i * stepSeconds).toFixed(1)),
-      altitude: parseFloat(altitude.toFixed(1)),
-      coverage: parseFloat(coverage.toFixed(1)),
-      battery,
-      lat: parseFloat(lat.toFixed(6)),
-      lng: parseFloat(lng.toFixed(6)),
-      speed: randBetween(8, 18),
-    });
-  }
-
-  return frames;
-}
-
-// ── Mock Task Dataset ─────────────────────────
-
-/**
- * Returns a set of pre-baked mock Task objects for UI development / demos.
- * These match the Task interface from types.ts.
- */
-export function getMockTasks(): Task[] {
-  const now = Math.floor(Date.now() / 1000);
-  const day = 86400;
-
-  return [
-    {
-      id: "1",
-      title: "Agricultural Survey – Wheat Fields",
-      description:
-        "Complete aerial coverage survey of 240-hectare wheat cultivation zone near Konya. High-resolution imagery required for crop health analysis using NDVI sensors.",
-      requirements: {
-        minCoverage: 95,
-        maxDurationMinutes: 45,
-        altitudeRange: { min: 80, max: 120 },
-        additionalConstraints: ["NDVI sensor required", "No fly zone: east boundary"],
-      },
-      reward: "0.25",
-      status: "open",
-      creator: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      acceptedBy: "",
-      deadline: now + 3 * day,
-    },
-    {
-      id: "2",
-      title: "Coastal Erosion Monitoring",
-      description:
-        "Map 18km of Black Sea coastline to measure erosion deltas from last quarter's storm data. LiDAR pointcloud export required.",
-      requirements: {
-        minCoverage: 100,
-        maxDurationMinutes: 90,
-        altitudeRange: { min: 50, max: 80 },
-        additionalConstraints: ["LiDAR payload", "Flight log GPS track required"],
-      },
-      reward: "0.8",
-      status: "open",
-      creator: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      acceptedBy: "",
-      deadline: now + 5 * day,
-    },
-    {
-      id: "3",
-      title: "Solar Farm Thermal Inspection",
-      description:
-        "Thermographic inspection of 500-panel solar installation to detect faulty cells. Deliver georeferenced thermal images with anomaly annotations.",
-      requirements: {
-        minCoverage: 100,
-        maxDurationMinutes: 30,
-        altitudeRange: { min: 20, max: 40 },
-        additionalConstraints: ["Thermal camera mandatory", "Morning flight (before 10:00)"],
-      },
-      reward: "0.45",
-      status: "accepted",
-      creator: "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
-      acceptedBy: "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
-      deadline: now + 2 * day,
-    },
-    {
-      id: "4",
-      title: "Construction Site Progress Scan",
-      description:
-        "Weekly volumetric scan of active construction site for quantity surveying. Output: 3D point cloud + progress report against design model.",
-      requirements: {
-        minCoverage: 90,
-        maxDurationMinutes: 25,
-        altitudeRange: { min: 60, max: 100 },
-        additionalConstraints: ["Photogrammetry resolution ≥ 3cm/px"],
-      },
-      reward: "0.15",
-      status: "submitted",
-      creator: "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
-      acceptedBy: "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
-      deadline: now + day,
-    },
-    {
-      id: "5",
-      title: "Forest Fire Risk Assessment",
-      description:
-        "Classify vegetation density and dry biomass across 600-hectare state forest to produce fire risk heatmap for emergency services.",
-      requirements: {
-        minCoverage: 98,
-        maxDurationMinutes: 120,
-        altitudeRange: { min: 100, max: 160 },
-        additionalConstraints: ["Multispectral sensor", "Wind speed < 8 m/s"],
-      },
-      reward: "1.2",
-      status: "approved",
-      creator: "0x976EA74026E726554dB657fA54763abd0C3a0aa9",
-      acceptedBy: "0x14dC79964da2C08b23698B3D3cc7Ca32193d9955",
-      deadline: now - day,
-    },
-  ];
 }

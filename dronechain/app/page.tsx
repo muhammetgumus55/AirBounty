@@ -157,7 +157,7 @@ export default function HomePage() {
         {/* NAV */}
         <nav className="flex items-center justify-between">
           <span className="text-xl font-bold tracking-tight text-white">
-            <span className="text-cyan-400">Drone</span>Chain
+            <span className="text-cyan-400">Zar</span>go
           </span>
           <WalletConnect />
         </nav>
@@ -225,45 +225,6 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* HOW IT WORKS */}
-        <section className="space-y-6">
-          <h2 className="text-xl font-bold">How It Works</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {[
-              {
-                icon: "🧾",
-                step: "01",
-                title: "Place Order",
-                desc: "Describe your delivery, lock payment in a smart contract.",
-              },
-              {
-                icon: "🤖",
-                step: "02",
-                title: "Drone Auto-Selects",
-                desc: "Nearest available drone evaluates the job and accepts autonomously.",
-              },
-              {
-                icon: "✅",
-                step: "03",
-                title: "AI Verifies & Pays",
-                desc: "Delivery confirmed on-chain, drone owner earns MON instantly.",
-              },
-            ].map((item) => (
-              <div
-                key={item.step}
-                className="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 flex flex-col gap-3"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-3xl">{item.icon}</span>
-                  <span className="text-xs font-mono text-gray-600">{item.step}</span>
-                </div>
-                <p className="font-bold text-white">{item.title}</p>
-                <p className="text-sm text-gray-400 leading-relaxed">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
         {/* ACTIVE DELIVERIES */}
         <section className="space-y-5">
           <div className="flex items-center justify-between">
@@ -274,12 +235,6 @@ export default function HomePage() {
                 LIVE
               </span>
             </div>
-            <Link
-              href="/tasks"
-              className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
-            >
-              View all →
-            </Link>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

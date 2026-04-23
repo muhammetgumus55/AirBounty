@@ -6,7 +6,7 @@ import {
   parseEther,
   type Eip1193Provider,
 } from "ethers";
-import type { CreateTaskPayload, DroneProof, Task, TaskRequirements, TaskStatus } from "./types";
+import type { CreateTaskPayload, DroneProof, Task, TaskRequirements, TaskStatusString } from "./types";
 
 declare global {
   interface WindowEthereum extends Eip1193Provider {
@@ -182,7 +182,7 @@ export const DRONE_TASK_ABI = CONTRACT_ABI;
 // Contract enum: OPEN=0, ACCEPTED=1, COMPLETED=2, VERIFIED=3, FAILED=4, CANCELLED=5
 // ─────────────────────────────────────────────────────────────────────────────
 
-const STATUS_MAP: TaskStatus[] = [
+const STATUS_MAP: TaskStatusString[] = [
   "open",       // 0 — OPEN
   "accepted",   // 1 — ACCEPTED
   "submitted",  // 2 — COMPLETED (proof uploaded, awaiting verification)
@@ -191,7 +191,7 @@ const STATUS_MAP: TaskStatus[] = [
   "expired",    // 5 — CANCELLED
 ];
 
-function mapStatus(raw: number): TaskStatus {
+function mapStatus(raw: number): TaskStatusString {
   return STATUS_MAP[raw] ?? "open";
 }
 
@@ -273,7 +273,6 @@ export async function getContract(withSigner = false): Promise<Contract> {
 // Write wrappers
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function createTask(payload: CreateTaskPayload): Promise<string>;
 export async function createTask(
   title: string,
   description: string,
@@ -281,19 +280,7 @@ export async function createTask(
   deadline: number,
   requirements: TaskRequirements,
   rewardEth: string
-): Promise<{ txHash: string; taskId: number } | string> {
-  if (typeof title !== "string") {
-    const payload = title as unknown as CreateTaskPayload;
-    const result = await createTask(
-      payload.title,
-      payload.description,
-      "general",
-      payload.deadline,
-      payload.requirements,
-      payload.rewardEth
-    );
-    return result.txHash;
-  }
+): Promise<{ txHash: string; taskId: number }> {
 
   try {
     const contract = await getContract(true);
@@ -332,9 +319,8 @@ export async function createTask(
 
     return { txHash: tx.hash as string, taskId };
   } catch (error) {
-    throw new Error(
-      `Failed to create task: ${error instanceof Error ? error.message : "Unknown transaction error"}`
-    );
+    // Preserve the original ethers error shape so parseWeb3Error can read revert details.
+    throw error;
   }
 }
 
@@ -353,10 +339,10 @@ export async function acceptTask(taskId: number | string): Promise<string> {
 export async function submitProof(taskId: number, proofHash: string): Promise<string>;
 export async function submitProof(proof: DroneProof): Promise<string>;
 export async function submitProof(taskIdOrProof: number | DroneProof, proofHashArg?: string): Promise<string> {
+  const taskId =
+    typeof taskIdOrProof === "number" ? taskIdOrProof : Number(taskIdOrProof.taskId);
   try {
     const contract = await getContract(true);
-    const taskId =
-      typeof taskIdOrProof === "number" ? taskIdOrProof : Number(taskIdOrProof.taskId);
     const proofHash =
       typeof proofHashArg === "string"
         ? proofHashArg

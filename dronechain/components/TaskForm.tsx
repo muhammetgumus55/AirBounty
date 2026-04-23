@@ -23,13 +23,6 @@ interface CategoryConfig {
   defaultWeight: number;
 }
 
-interface AIResult {
-  maxDeliveryMinutes: number;
-  requiredCapabilities: string[];
-  handlingNotes: string[];
-  reasoning: string;
-}
-
 // ── Category config ───────────────────────────
 
 const CATEGORIES: CategoryConfig[] = [
@@ -153,11 +146,6 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
   const [requiresCooling,    setRequiresCooling]    = useState(true);
   const [requiresSignature,  setRequiresSignature]  = useState(false);
 
-  // ── AI result ──────────────────────────────
-  const [aiResult,      setAiResult]      = useState<AIResult | null>(null);
-  const [aiLoading,     setAiLoading]     = useState(false);
-  const [aiError,       setAiError]       = useState<string | null>(null);
-
   // ── Submit state ───────────────────────────
   const [submitting,  setSubmitting]  = useState(false);
   const [error,       setError]       = useState<string | null>(null);
@@ -169,59 +157,32 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
     setCategoryId(id);
     setRequiresCooling(cfg.requiresCooling);
     setWeightKg(cfg.defaultWeight);
-    setAiResult(null);
-    setAiError(null);
-  };
-
-  // ── AI generation ──────────────────────────
-  const handleGenerateAI = async () => {
-    if (!orderDescription.trim()) {
-      setAiError("Please enter an order description first.");
-      return;
-    }
-    setAiLoading(true);
-    setAiError(null);
-    setAiResult(null);
-
-    try {
-      const res = await fetch("/api/generate-requirements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: categoryId,
-          description: orderDescription,
-          distanceKm,
-          weightKg,
-          isFragile,
-          requiresCooling,
-          requiresSignature,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "AI request failed");
-      setAiResult(data as AIResult);
-    } catch (err) {
-      setAiError(err instanceof Error ? err.message : "AI generation failed");
-    } finally {
-      setAiLoading(false);
-    }
   };
 
   // ── Submit ─────────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMsg(null);
 
     if (!walletAddress) { setError("Please connect your wallet first."); return; }
     if (!orderDescription.trim()) { setError("Order description is required."); return; }
     if (!pickupLocation.trim())   { setError("Pickup location is required.");   return; }
     if (!dropoffLocation.trim())  { setError("Dropoff location is required.");  return; }
     if (weightKg > 5)             { setError("Package weight must be ≤ 5 kg."); return; }
+    if (Number(rewardMon) <= 0)   { setError("Reward must be greater than 0 MON."); return; }
 
     const cfg        = getCategoryConfig(categoryId);
-    const maxMinutes = aiResult?.maxDeliveryMinutes ?? cfg.maxDeliveryMinutes;
+    const maxMinutes = cfg.maxDeliveryMinutes;
     const deadlineTs = Math.floor(new Date(deadline).getTime() / 1000);
+    if (!Number.isFinite(deadlineTs)) {
+      setError("Please select a valid deadline.");
+      return;
+    }
+    if (deadlineTs <= Math.floor(Date.now() / 1000)) {
+      setError("Deadline must be in the future.");
+      return;
+    }
     const caps       = getRequiredCapabilities(categoryId, weightKg);
 
     const title = `${cfg.emoji} ${cfg.label} Delivery: ${pickupLocation} → ${dropoffLocation}`;
@@ -433,76 +394,6 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
         </CardContent>
       </Card>
 
-      {/* ── STEP 3: AI Requirements ── */}
-      <Card className="bg-slate-900/60 border-white/8 rounded-2xl">
-        <CardHeader className="pb-2 pt-5 px-6">
-          <h2 className="text-slate-200 font-semibold">
-            <span className="text-cyan-400 text-xs font-bold uppercase tracking-widest mr-2">Step 3</span>
-            AI Delivery Parameters
-          </h2>
-        </CardHeader>
-        <CardContent className="px-6 pb-6 space-y-4">
-          <Button
-            type="button"
-            onClick={handleGenerateAI}
-            disabled={aiLoading || submitting}
-            className="w-full h-11 bg-slate-800 hover:bg-slate-700 border border-white/10 hover:border-cyan-500/40
-                       text-slate-200 font-medium rounded-xl transition-all disabled:opacity-40"
-          >
-            {aiLoading ? (
-              <><Loader2 size={16} className="animate-spin mr-2" />Generating…</>
-            ) : (
-              "🤖 Generate Delivery Parameters"
-            )}
-          </Button>
-
-          {aiError && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
-              {aiError}
-            </div>
-          )}
-
-          {aiResult && (
-            <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl px-4 py-4 space-y-3">
-              <div className="flex items-center gap-2 text-cyan-400 font-medium text-sm mb-1">
-                <span>✅</span> AI Parameters Generated
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                <div className="bg-white/3 rounded-lg px-3 py-2.5">
-                  <p className="text-slate-500 text-xs mb-0.5">Max Delivery Time</p>
-                  <p className="text-slate-200 font-semibold">{aiResult.maxDeliveryMinutes} min</p>
-                </div>
-                <div className="bg-white/3 rounded-lg px-3 py-2.5 sm:col-span-2">
-                  <p className="text-slate-500 text-xs mb-1">Required Drone Capabilities</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {aiResult.requiredCapabilities.map((cap, i) => (
-                      <span key={i} className="bg-cyan-500/10 text-cyan-300 text-xs px-2 py-0.5 rounded-full border border-cyan-500/20">
-                        {cap}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              {aiResult.handlingNotes.length > 0 && (
-                <div className="bg-white/3 rounded-lg px-3 py-2.5 text-sm">
-                  <p className="text-slate-500 text-xs mb-1.5">Special Handling Notes</p>
-                  <ul className="space-y-1">
-                    {aiResult.handlingNotes.map((note, i) => (
-                      <li key={i} className="text-slate-300 text-xs flex items-start gap-1.5">
-                        <span className="text-cyan-500 mt-0.5">•</span>{note}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {aiResult.reasoning && (
-                <p className="text-slate-500 text-xs italic">{aiResult.reasoning}</p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* ── Error / Success ── */}
       {error && (
         <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">
@@ -516,7 +407,7 @@ export default function TaskForm({ walletAddress }: TaskFormProps) {
         </div>
       )}
 
-      {/* ── STEP 4: Submit ── */}
+      {/* ── STEP 3: Submit ── */}
       <div className="space-y-2">
         <Button
           id="create-task-submit"
