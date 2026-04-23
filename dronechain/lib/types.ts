@@ -63,6 +63,21 @@ export interface DroneProof {
   timestamp: number;
   /** Hardware serial / unique drone identifier */
   droneId: string;
+  /** Optional extra telemetry payload captured from the mission */
+  rawData?: {
+    gpsTrackPoints: number;
+    batteryUsed: string;
+    weatherCondition: string;
+  };
+}
+
+/** Quick pre-flight acceptance estimate for a drone-task match */
+export interface DroneEvaluation {
+  droneId: string;
+  batteryLevel: number;
+  distanceKm: number;
+  canAccept: boolean;
+  reason: string;
 }
 
 /** Result produced by the AI verification service */

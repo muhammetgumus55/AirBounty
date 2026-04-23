@@ -1,12 +1,16 @@
 // ─────────────────────────────────────────────
 //  DroneChain – Mock Drone Telemetry Generator
 // ─────────────────────────────────────────────
-import type { DroneProof, Task, TaskRequirements } from "./types";
+import type { DroneEvaluation, DroneProof, Task, TaskRequirements } from "./types";
 
 // ── Drone ID Pool ────────────────────────────
 
 const DRONE_PREFIXES = ["HAWK", "EAGLE", "VIPER", "GHOST", "STORM"];
 const DRONE_VARIANTS = ["X1", "X2", "PRO", "LITE", "MAX"];
+
+function randInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
 
 /** Generates a random plausible drone serial */
 export function generateDroneId(): string {
@@ -14,6 +18,78 @@ export function generateDroneId(): string {
   const variant = DRONE_VARIANTS[Math.floor(Math.random() * DRONE_VARIANTS.length)];
   const serial = Math.floor(1000 + Math.random() * 9000);
   return `${prefix}-${variant}-${serial}`;
+}
+
+/** Returns a random DroneChain-formatted drone ID */
+export function getRandomDroneId(): string {
+  return `DRONE-MND-${randInt(1000, 9999)}`;
+}
+
+/** Evaluates whether a drone can accept a task based on battery and range */
+export function simulateDroneEvaluation(_task: Task): DroneEvaluation {
+  const batteryLevel = randInt(55, 100);
+  const distanceKm = Number((1 + Math.random() * 14).toFixed(1));
+  const canAccept = batteryLevel >= 70 && distanceKm <= 10;
+
+  let reason = "Battery and range within acceptable parameters";
+  if (batteryLevel < 70) {
+    reason = "Insufficient battery level for mission";
+  } else if (distanceKm > 10) {
+    reason = "Target location exceeds operational range";
+  }
+
+  return {
+    droneId: getRandomDroneId(),
+    batteryLevel,
+    distanceKm,
+    canAccept,
+    reason,
+  };
+}
+
+/** Generates proof payload for either successful or failed mission outcomes */
+export function generateDroneProof(task: Task, droneId: string, success: boolean): DroneProof {
+  const requirements: TaskRequirements = task.requirements;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const altitudeMid =
+    (requirements.altitudeRange.min + requirements.altitudeRange.max) / 2;
+
+  let coveragePercent: number;
+  let durationMinutes: number;
+  let altitude: number;
+
+  if (success) {
+    coveragePercent = randInt(92, 98);
+    durationMinutes = requirements.maxDurationMinutes - randInt(2, 5);
+    altitude = Math.round(altitudeMid + randInt(-5, 5));
+  } else {
+    coveragePercent = randInt(92, 98);
+    durationMinutes = requirements.maxDurationMinutes - randInt(2, 5);
+    altitude = Math.round(altitudeMid + randInt(-5, 5));
+
+    const failureType = randInt(0, 2);
+    if (failureType === 0) {
+      coveragePercent = 65;
+    } else if (failureType === 1) {
+      durationMinutes = requirements.maxDurationMinutes + 10;
+    } else {
+      altitude = requirements.altitudeRange.max + randInt(8, 15);
+    }
+  }
+
+  return {
+    taskId: task.id,
+    coveragePercent,
+    durationMinutes,
+    altitude,
+    timestamp,
+    droneId,
+    rawData: {
+      gpsTrackPoints: 847,
+      batteryUsed: "34%",
+      weatherCondition: "clear",
+    },
+  };
 }
 
 // ── Telemetry Helpers ─────────────────────────
