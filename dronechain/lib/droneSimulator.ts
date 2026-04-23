@@ -26,7 +26,8 @@ export function getRandomDroneId(): string {
 }
 
 /** Evaluates whether a drone can accept a task based on battery and range */
-export function simulateDroneEvaluation(_task: Task): DroneEvaluation {
+export function simulateDroneEvaluation(task: Task): DroneEvaluation {
+  void task;
   const batteryLevel = randInt(55, 100);
   const distanceKm = Number((1 + Math.random() * 14).toFixed(1));
   const canAccept = batteryLevel >= 70 && distanceKm <= 10;

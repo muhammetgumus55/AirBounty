@@ -1,13 +1,27 @@
-import { BrowserProvider, Contract, formatEther, parseEther } from "ethers";
+import {
+  BrowserProvider,
+  Contract,
+  JsonRpcProvider,
+  formatEther,
+  parseEther,
+  type Eip1193Provider,
+} from "ethers";
 import type { CreateTaskPayload, DroneProof, Task, TaskRequirements } from "./types";
 
 declare global {
+  interface WindowEthereum extends Eip1193Provider {
+    on: (eventName: string, listener: (...args: unknown[]) => void) => void;
+    removeListener: (eventName: string, listener: (...args: unknown[]) => void) => void;
+  }
+
   interface Window {
-    ethereum?: unknown;
+    ethereum?: WindowEthereum;
   }
 }
 
 export const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "";
+export const MONAD_RPC = process.env.NEXT_PUBLIC_MONAD_RPC || "https://testnet-rpc.monad.xyz";
+export const MONAD_CHAIN_ID = 10143;
 
 export const CONTRACT_ABI = [
   "function createTask((uint256 minCoverage,uint256 maxDurationMinutes,uint256 altitudeMin,uint256 altitudeMax) requirements) payable",
@@ -23,6 +37,9 @@ export const CONTRACT_ABI = [
   "event TaskVerified(uint256 indexed taskId,bool approved)",
   "event TaskCancelled(uint256 indexed taskId)"
 ] as const;
+
+// Backward-compatible alias used by existing components.
+export const DRONE_TASK_ABI = CONTRACT_ABI;
 
 const STATUS_MAP: Task["status"][] = [
   "open",
@@ -44,12 +61,34 @@ function toNumber(value: unknown): number {
   return Number(value ?? 0);
 }
 
-function normalizeTask(raw: any): Task {
-  const requirements = raw?.requirements ?? {};
+function normalizeTask(raw: unknown): Task {
+  const safeRaw = (raw ?? {}) as {
+    id?: unknown;
+    title?: unknown;
+    description?: unknown;
+    requirements?: {
+      minCoverage?: unknown;
+      maxDurationMinutes?: unknown;
+      altitudeMin?: unknown;
+      altitudeMax?: unknown;
+    };
+    reward?: unknown;
+    status?: unknown;
+    creator?: unknown;
+    acceptedBy?: unknown;
+    deadline?: unknown;
+  };
+  const requirements = safeRaw.requirements ?? {};
+  const rewardWei =
+    typeof safeRaw.reward === "bigint" ||
+    typeof safeRaw.reward === "string" ||
+    typeof safeRaw.reward === "number"
+      ? safeRaw.reward
+      : BigInt(0);
   return {
-    id: String(raw?.id ?? ""),
-    title: raw?.title ?? "",
-    description: raw?.description ?? "",
+    id: String(safeRaw.id ?? ""),
+    title: String(safeRaw.title ?? ""),
+    description: String(safeRaw.description ?? ""),
     requirements: {
       minCoverage: toNumber(requirements?.minCoverage),
       maxDurationMinutes: toNumber(requirements?.maxDurationMinutes),
@@ -59,11 +98,11 @@ function normalizeTask(raw: any): Task {
       },
       additionalConstraints: [],
     },
-    reward: formatEther(raw?.reward ?? 0n),
-    status: mapStatus(toNumber(raw?.status)),
-    creator: raw?.creator ?? "0x0000000000000000000000000000000000000000",
-    acceptedBy: raw?.acceptedBy ?? "0x0000000000000000000000000000000000000000",
-    deadline: toNumber(raw?.deadline),
+    reward: formatEther(rewardWei),
+    status: mapStatus(toNumber(safeRaw.status)),
+    creator: String(safeRaw.creator ?? "0x0000000000000000000000000000000000000000"),
+    acceptedBy: String(safeRaw.acceptedBy ?? "0x0000000000000000000000000000000000000000"),
+    deadline: toNumber(safeRaw.deadline),
   };
 }
 
@@ -72,6 +111,15 @@ export function getProvider(): BrowserProvider {
     throw new Error("No injected wallet found. Please install MetaMask or a compatible wallet.");
   }
   return new BrowserProvider(window.ethereum);
+}
+
+// Backward-compatible alias used by existing components.
+export function getBrowserProvider(): BrowserProvider {
+  return getProvider();
+}
+
+export function getReadOnlyProvider(): JsonRpcProvider {
+  return new JsonRpcProvider(MONAD_RPC);
 }
 
 export async function getSigner() {
@@ -136,7 +184,7 @@ export async function createTask(
   }
 }
 
-export async function acceptTask(taskId: number): Promise<string> {
+export async function acceptTask(taskId: number | string): Promise<string> {
   try {
     const contract = await getContract(true);
     const tx = await contract.acceptTask(BigInt(taskId));
@@ -196,7 +244,7 @@ export async function cancelTask(taskId: number): Promise<string> {
   }
 }
 
-export async function getTask(taskId: number): Promise<Task> {
+export async function getTask(taskId: number | string): Promise<Task> {
   try {
     const contract = await getContract(false);
     const rawTask = await contract.getTask(BigInt(taskId));
@@ -227,4 +275,21 @@ export async function approveTask(taskId: number | string): Promise<string> {
 
 export async function rejectTask(taskId: number | string): Promise<string> {
   return verifyAndPay(Number(taskId), false);
+}
+
+export async function switchToMonad(): Promise<void> {
+  if (typeof window === "undefined" || !window.ethereum) {
+    throw new Error("MetaMask not found");
+  }
+
+  const provider = getProvider();
+  await provider.send("wallet_addEthereumChain", [
+    {
+      chainId: `0x${MONAD_CHAIN_ID.toString(16)}`,
+      chainName: "Monad Testnet",
+      nativeCurrency: { name: "Monad", symbol: "MON", decimals: 18 },
+      rpcUrls: [MONAD_RPC],
+      blockExplorerUrls: ["https://explorer.testnet.monad.xyz"],
+    },
+  ]);
 }

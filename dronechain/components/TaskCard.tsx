@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Clock, MapPin, Coins, ArrowRight, User } from "lucide-react";
+import { Clock, Coins, ArrowRight, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

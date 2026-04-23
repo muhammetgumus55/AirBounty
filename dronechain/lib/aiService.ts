@@ -33,3 +33,11 @@ export async function verifyDroneTask(
 
   return response.json();
 }
+
+// Backward-compatible alias used by /api/verify route.
+export async function verifyDroneProof(
+  task: Task,
+  proof: DroneProof
+): Promise<VerificationResult> {
+  return verifyDroneTask(task, proof);
+}
